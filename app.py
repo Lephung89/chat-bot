@@ -18,6 +18,9 @@ import glob
 from pathlib import Path
 from dotenv import load_dotenv
 import base64
+import warnings
+warnings.filterwarnings("ignore")
+
 
 def get_base64_of_image(path):
     """Convert image to base64 string"""
