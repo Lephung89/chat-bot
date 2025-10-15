@@ -967,7 +967,7 @@ def create_conversational_chain(vector_store, llm):
 @st.cache_resource
 def get_gemini_llm():
     return GoogleGenerativeAI(
-        model="models/gemini-1.5-flash-latest",
+        model="gemini-1.5-flash",
         google_api_key=gemini_api_key,
         temperature=0.3,
         max_output_tokens=1000
