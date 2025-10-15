@@ -313,7 +313,8 @@ def initialize_vectorstore():
                 'total_chunks': vectorstore.index.ntotal,
                 'last_updated': datetime.now().isoformat()
             }
-            st.success(f"✅ Đã xử lý {len(processed)} files thành công!")
+            if debug:
+                st.success(f"✅ Đã xử lý {len(processed)} files thành công!")
             return vectorstore, stats
     
     return None, {}
