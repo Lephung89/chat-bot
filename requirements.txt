@@ -12,3 +12,4 @@ gdown>=4.7.1
 google-auth-oauthlib>=1.2.1
 google-api-python-client>=2.149.0
 schedule>=1.2.2
+langchain-openai==0.1.0
