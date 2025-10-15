@@ -4,7 +4,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain.chains import ConversationalRetrievalChain
-from langchain_google_genai import ChatGoogleGenerativeAI
+import google.generativeai as genai
 from langchain.memory import ConversationBufferWindowMemory
 from langchain.prompts import PromptTemplate
 import os
@@ -374,80 +374,72 @@ def get_category_badge(category):
     return f'<span class="category-badge {badge_class}">{category}</span>'
 
 def create_conversational_chain(vector_store, llm):
-    """Tạo chain"""
-    prompt = PromptTemplate(
-        template=COUNSELING_PROMPT_TEMPLATE,
-        input_variables=["context", "chat_history", "question"]
-    )
-    
-    memory = ConversationBufferWindowMemory(
-        k=5,
-        memory_key="chat_history",
-        return_messages=True,
-        output_key="answer"
-    )
-    
-    return ConversationalRetrievalChain.from_llm(
-        llm=llm,
-        retriever=vector_store.as_retriever(search_kwargs={"k": 5}),
-        memory=memory,
-        return_source_documents=True,
-        combine_docs_chain_kwargs={"prompt": prompt}
-    )
+    """
+    Tạo chain với Google Generative AI
+    Không dùng LangChain chain nữa - xử lý trực tiếp
+    """
+    # Trả về tuple: (vectorstore, llm) để xử lý manual
+    return (vector_store, llm)
 
 @st.cache_resource
 def get_gemini_llm():
     """
-    Khởi tạo Gemini LLM với tên model CHÍNH XÁC theo Google AI
-    
-    QUAN TRỌNG: Phải dùng format models/model-name cho v1beta API
+    Khởi tạo Gemini bằng Google Generative AI SDK
+    ĐƠN GIẢN và HOẠT ĐỘNG ỔN ĐỊNH
     """
     if not gemini_api_key:
         st.error("❌ Thiếu GEMINI_API_KEY!")
         st.stop()
     
-    # Danh sách models theo thứ tự ưu tiên
-    model_list = [
-        "models/gemini-1.5-flash-latest",
-        "models/gemini-1.5-pro-latest", 
-        "models/gemini-pro",
-    ]
-    
-    for model_name in model_list:
-        try:
-            llm = ChatGoogleGenerativeAI(
-                model=model_name,
-                google_api_key=gemini_api_key,
-                temperature=0.3,
-                max_output_tokens=2000,
-                convert_system_message_to_human=True
-            )
-            
-            # Test model
-            llm.invoke("Test")
-            st.success(f"✅ Đã kết nối {model_name}")
-            return llm
-            
-        except Exception as e:
-            if "not found" in str(e).lower():
-                st.warning(f"⚠️ {model_name} không khả dụng, thử model khác...")
+    try:
+        # Configure API
+        genai.configure(api_key=gemini_api_key)
+        
+        # Thử từng model theo thứ tự ưu tiên
+        model_names = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]
+        
+        for model_name in model_names:
+            try:
+                model = genai.GenerativeModel(
+                    model_name=model_name,
+                    generation_config={
+                        "temperature": 0.3,
+                        "top_p": 0.95,
+                        "top_k": 40,
+                        "max_output_tokens": 2000,
+                    }
+                )
+                
+                # Test model
+                test_response = model.generate_content("Xin chào")
+                
+                if test_response.text:
+                    st.success(f"✅ Đã kết nối Google Gemini: {model_name}")
+                    return model
+                    
+            except Exception as e:
+                st.warning(f"⚠️ {model_name} không khả dụng: {str(e)[:80]}")
                 continue
-            else:
-                st.error(f"❌ Lỗi: {e}")
-                continue
-    
-    # Nếu tất cả model đều lỗi
-    st.error("❌ Không thể kết nối đến bất kỳ Gemini model nào!")
-    st.info("""
-    **Hãy thử:**
-    1. Kiểm tra API key tại: https://aistudio.google.com/app/apikey
-    2. Đảm bảo API key có quyền truy cập Gemini API
-    3. Kiểm tra quota của API key
-    """)
-    st.stop()
+        
+        # Nếu tất cả đều fail
+        st.error("❌ Không thể kết nối Gemini!")
+        st.stop()
+        
+    except Exception as e:
+        st.error(f"❌ Lỗi cấu hình Gemini API: {e}")
+        st.info("""
+        **Hướng dẫn:**
+        1. Lấy API key: https://aistudio.google.com/app/apikey
+        2. Thêm vào Streamlit Secrets:
+        ```
+        GEMINI_API_KEY = "AIzaSy..."
+        ```
+        3. Enable Gemini API tại Google Cloud Console
+        """)
+        st.stop()
 
 def answer_from_external_api(prompt, llm, question_category):
-    """Trả lời từ API - Compatible với ChatGoogleGenerativeAI"""
+    """Trả lời từ Google Generative AI SDK"""
     enhanced_prompt = f"""
 Bạn là chuyên gia tư vấn {question_category.lower()} của Đại học Luật TPHCM.
 
@@ -465,24 +457,20 @@ QUY TẮC:
 - Luôn dùng thông tin cụ thể ở trên
 - Kết thúc bằng thông tin liên hệ nếu cần
 
-Trả lời thân thiện, chuyên nghiệp:
+Trả lời thân thiện, chuyên nghiệp bằng tiếng Việt:
 """
     
     try:
-        # ChatGoogleGenerativeAI trả về AIMessage object
-        response = llm.invoke(enhanced_prompt)
-        
-        # Extract content từ AIMessage
-        if hasattr(response, 'content'):
-            answer = response.content
-        else:
-            answer = str(response)
+        # Google Generative AI SDK
+        response = llm.generate_content(enhanced_prompt)
+        answer = response.text
         
         # Thay thế placeholder còn sót
         replacements = {
             "[Số điện thoại": "1900 5555 14 hoặc 0879 5555 14",
             "[Email": "tuyensinh@hcmulaw.edu.vn",
-            "[Website": "www.hcmulaw.edu.vn"
+            "[Website": "www.hcmulaw.edu.vn",
+            "[Điện thoại": "(028) 39400 989"
         }
         
         for placeholder, actual in replacements.items():
@@ -495,12 +483,12 @@ Trả lời thân thiện, chuyên nghiệp:
         return f"""
 Xin lỗi, hệ thống gặp sự cố. Vui lòng liên hệ:
 
-📞 Hotline: 1900 5555 14 hoặc 0879 5555 14
-📧 Email: tuyensinh@hcmulaw.edu.vn
-🌐 Website: www.hcmulaw.edu.vn
-📍 Địa chỉ: 2 Nguyễn Tất Thành, P.12, Q.4, TP.HCM
+📞 **Hotline:** 1900 5555 14 hoặc 0879 5555 14
+📧 **Email:** tuyensinh@hcmulaw.edu.vn
+🌐 **Website:** www.hcmulaw.edu.vn
+📍 **Địa chỉ:** 2 Nguyễn Tất Thành, P.12, Q.4, TP.HCM
 
-Lỗi: {str(e)}
+_(Lỗi kỹ thuật: {str(e)[:100]})_
 """
 
 def display_quick_questions():
@@ -603,7 +591,12 @@ def main():
     with st.spinner("🔄 Đang khởi động hệ thống..."):
         vectorstore, stats = initialize_vectorstore()
         llm = get_gemini_llm()
-        chain = create_conversational_chain(vectorstore, llm) if vectorstore else None
+        
+        # Không dùng chain nữa, xử lý trực tiếp
+        if vectorstore:
+            retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+        else:
+            retriever = None
 
     # Hiển thị câu hỏi gợi ý nếu là lần đầu
     if not st.session_state.messages and st.session_state.first_visit:
@@ -651,10 +644,32 @@ def main():
             
             with st.spinner("🤔 Đang suy nghĩ..."):
                 try:
-                    if chain:
-                        response = chain({"question": prompt})
-                        answer = response["answer"]
+                    # XỬ LÝ TRỰC TIẾP không dùng chain
+                    if retriever:
+                        # Lấy context từ vectorstore
+                        docs = retriever.get_relevant_documents(prompt)
+                        context = "\n\n".join([doc.page_content for doc in docs[:3]])
+                        
+                        # Tạo prompt với context
+                        full_prompt = f"""
+Bạn là chuyên gia tư vấn của Đại học Luật TPHCM.
+
+THÔNG TIN THAM KHẢO:
+{context}
+
+THÔNG TIN LIÊN HỆ:
+- Hotline: 1900 5555 14 hoặc 0879 5555 14
+- Email: tuyensinh@hcmulaw.edu.vn
+- Website: www.hcmulaw.edu.vn
+
+Câu hỏi: {prompt}
+
+Hãy trả lời dựa trên thông tin tham khảo ở trên. Nếu không có thông tin, hãy tư vấn chung và khuyến khích liên hệ trực tiếp.
+"""
+                        response = llm.generate_content(full_prompt)
+                        answer = response.text
                     else:
+                        # Không có vectorstore, dùng API thuần
                         answer = answer_from_external_api(prompt, llm, category)
                     
                     st.markdown(answer)
@@ -667,7 +682,7 @@ Vui lòng liên hệ:
 📞 Hotline: 1900 5555 14 hoặc 0879 5555 14
 📧 Email: tuyensinh@hcmulaw.edu.vn
 
-Lỗi: {str(e)}
+_(Lỗi: {str(e)[:100]})_
 """
                     st.error(answer)
 
