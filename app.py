@@ -755,6 +755,7 @@ _(Lỗi: {str(e)[:100]})_
                 "content": answer,
                 "category": category
             })
+            st.rerun()
 
     # Footer
     st.markdown("---")
