@@ -4,7 +4,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain.chains import ConversationalRetrievalChain
-from langchain_google_genai import GoogleGenerativeAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.memory import ConversationBufferWindowMemory
 from langchain.prompts import PromptTemplate
 import os
@@ -398,40 +398,52 @@ def create_conversational_chain(vector_store, llm):
 @st.cache_resource
 def get_gemini_llm():
     """
-    Khởi tạo Gemini LLM với tên model CHÍNH XÁC
+    Khởi tạo Gemini LLM - SỬ DỤNG ChatGoogleGenerativeAI
     
-    QUAN TRỌNG: langchain-google-genai chỉ hỗ trợ:
-    - gemini-pro (stable)
-    - gemini-1.5-pro-latest 
-    - gemini-1.5-flash-latest
-    
-    KHÔNG hỗ trợ: gemini-1.5-flash (thiếu -latest)
+    Models được hỗ trợ:
+    - gemini-1.5-flash (khuyên dùng - nhanh, rẻ)
+    - gemini-1.5-pro (mạnh hơn nhưng chậm hơn)
+    - gemini-pro (phiên bản cũ)
     """
     if not gemini_api_key:
         st.error("❌ Thiếu GEMINI_API_KEY!")
         st.stop()
     
     try:
-        # Thử model gemini-pro trước (ổn định nhất)
-        llm = GoogleGenerativeAI(
-            model="gemini-pro",  # Model ổn định nhất
+        # SỬ DỤNG ChatGoogleGenerativeAI thay vì GoogleGenerativeAI
+        llm = ChatGoogleGenerativeAI(
+            model="gemini-1.5-flash",  # Model mới nhất, nhanh và rẻ
             google_api_key=gemini_api_key,
             temperature=0.3,
-            max_output_tokens=2000
+            max_output_tokens=2000,
+            convert_system_message_to_human=True  # Quan trọng cho compatibility
         )
         
         # Test model
-        llm.invoke("Hello")
-        st.success("✅ Đã kết nối Gemini Pro")
+        test_response = llm.invoke("Xin chào")
+        st.success(f"✅ Đã kết nối Gemini 1.5 Flash")
         return llm
         
     except Exception as e:
-        st.error(f"❌ Lỗi kết nối Gemini: {e}")
-        st.info("💡 Hãy kiểm tra API key tại: https://makersuite.google.com/app/apikey")
-        st.stop()
+        # Fallback sang gemini-pro nếu lỗi
+        try:
+            st.warning(f"⚠️ Gemini 1.5 Flash lỗi, đang thử Gemini Pro...")
+            llm = ChatGoogleGenerativeAI(
+                model="gemini-pro",
+                google_api_key=gemini_api_key,
+                temperature=0.3,
+                convert_system_message_to_human=True
+            )
+            llm.invoke("Test")
+            st.success("✅ Đã kết nối Gemini Pro")
+            return llm
+        except Exception as e2:
+            st.error(f"❌ Lỗi kết nối Gemini: {e2}")
+            st.info("💡 Kiểm tra API key tại: https://makersuite.google.com/app/apikey")
+            st.stop()
 
 def answer_from_external_api(prompt, llm, question_category):
-    """Trả lời từ API"""
+    """Trả lời từ API - Compatible với ChatGoogleGenerativeAI"""
     enhanced_prompt = f"""
 Bạn là chuyên gia tư vấn {question_category.lower()} của Đại học Luật TPHCM.
 
@@ -453,7 +465,14 @@ Trả lời thân thiện, chuyên nghiệp:
 """
     
     try:
+        # ChatGoogleGenerativeAI trả về AIMessage object
         response = llm.invoke(enhanced_prompt)
+        
+        # Extract content từ AIMessage
+        if hasattr(response, 'content'):
+            answer = response.content
+        else:
+            answer = str(response)
         
         # Thay thế placeholder còn sót
         replacements = {
@@ -463,10 +482,10 @@ Trả lời thân thiện, chuyên nghiệp:
         }
         
         for placeholder, actual in replacements.items():
-            if placeholder in response:
-                response = response.replace(placeholder + "]", actual)
+            if placeholder in answer:
+                answer = answer.replace(placeholder + "]", actual)
         
-        return response
+        return answer
         
     except Exception as e:
         return f"""
