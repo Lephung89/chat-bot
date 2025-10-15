@@ -44,36 +44,30 @@ st.set_page_config(
 # CSS tối ưu
 st.markdown("""
 <style>
-.chatbot-header {
-    background: linear-gradient(135deg, #003366, #004c99);
+.header-box {
+    background-color: #003366;
     color: white;
-    border-radius: 16px;
-    padding: 24px;
+    padding: 12px 24px;
+    border-radius: 12px;
     text-align: center;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    margin-bottom: 10px;
 }
-.chatbot-header h1 {
-    font-size: 1.8rem;
-    margin-bottom: 0.2rem;
+.header-box h1 {
+    font-size: 1.5rem;
+    margin-bottom: 0;
 }
-.chatbot-header h3 {
-    font-size: 1.2rem;
-    font-weight: 400;
-    margin-top: 0;
-    opacity: 0.9;
-}
-.chatbot-header p {
-    font-size: 1rem;
+.header-box p {
+    font-size: 0.95rem;
     opacity: 0.85;
 }
 </style>
 
-<div class="chatbot-header">
-    <h1>🤖 Chatbot Tư Vấn Tuyển Sinh</h1>
-    <h3>Trường Đại học Luật TP. Hồ Chí Minh</h3>
-    <p>💬 Hỗ trợ 24/7 &nbsp; | &nbsp; 🎓 Tư vấn chuyên nghiệp</p>
+<div class="header-box">
+    <h1>🎓 Chatbot Tư Vấn Tuyển Sinh</h1>
+    <p>Trường Đại học Luật TP. Hồ Chí Minh — Hỗ trợ 24/7</p>
 </div>
 """, unsafe_allow_html=True)
+
 
 
 # Load biến môi trường
