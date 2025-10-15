@@ -44,6 +44,15 @@ st.set_page_config(
 # CSS tối ưu
 st.markdown("""
 <style>
+/* Ẩn nút Fork, GitHub, và toàn bộ header mặc định của Streamlit */
+header[data-testid="stHeader"], 
+#MainMenu, 
+footer, 
+button[title="View app source code"] {
+    visibility: hidden;
+    height: 0;
+    display: none;
+}
 .header-container {
     background: linear-gradient(90deg, #003366, #004c99);
     color: white;
