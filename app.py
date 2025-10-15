@@ -44,15 +44,19 @@ st.set_page_config(
 # CSS tối ưu
 st.markdown("""
 <style>
-/* Ẩn nút Fork và biểu tượng GitHub trên header Streamlit Cloud */
-header[data-testid="stHeader"] a[href*="github.com"],
-header[data-testid="stHeader"] svg[data-testid="stIconGithub"] {
+/* Ẩn nút Fork và GitHub trong header Streamlit */
+header[data-testid="stHeader"] button[data-testid="stToolbarActionButton"] svg {
     display: none !important;
-    visibility: hidden !important;
+}
+header[data-testid="stHeader"] button[data-testid="stToolbarActionButton"] div:has(svg) {
+    display: none !important;
+}
+header[data-testid="stHeader"] a[href*="github.com"] {
+    display: none !important;
 }
 
-/* Giữ lại menu ba chấm (⋮) */
-header[data-testid="stHeader"] button[kind="header"] {
+/* Giữ lại nút menu ⋮ */
+header[data-testid="stHeader"] button[kind="header"][aria-label="Main menu"] {
     display: inline-flex !important;
 }
 .header-container {
