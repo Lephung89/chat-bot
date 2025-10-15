@@ -535,14 +535,10 @@ def display_quick_questions():
         "📞 Thông tin liên hệ?"
     ]
     
-    cols = st.columns(2)
     for i, q in enumerate(questions):
-        with cols[i % 2]:
-            if st.button(q, key=f"q_{i}", use_container_width=True):
-                clean_q = q.split(" ", 1)[1]
-                st.session_state.messages.append({"role": "user", "content": clean_q})
-                st.session_state.process_question = clean_q
-                st.rerun()
+        if st.button(q, key=f"q_{i}"):
+            st.session_state["pending_question"] = q
+            st.rerun()
 
 def main():
     # Kiểm tra API key
@@ -658,7 +654,10 @@ def main():
         del st.session_state.process_question
     else:
         prompt = st.chat_input("💬 Hãy đặt câu hỏi...")
-
+    if "pending_question" in st.session_state and st.session_state.pending_question:
+    prompt = st.session_state.pending_question
+    st.session_state.pending_question = None
+    
     if prompt:
         st.session_state.first_visit = False
         
