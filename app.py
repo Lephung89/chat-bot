@@ -84,6 +84,18 @@ header[data-testid="stHeader"] button[kind="header"][aria-label="Main menu"] {
     margin-top: 0.2rem;
     opacity: 0.85;
 }
+[data-testid="stToolbarActionButtonIcon"],[data-testid="stToolbarActionButtonLabel"] {
+    display: none !important;
+}
+[data-testid="stToolbar"] button:has([data-testid="stToolbarActionButtonIcon"]),
+[data-testid="stToolbar"] button:has([data-testid="stToolbarActionButtonLabel"])
+{
+    pointer-events: none !important;
+}
+}
+[data-testid="stToolbarActionButtonLabel"] {
+        display: none !important;
+    }
 </style>
 
 <div class="header-container">
