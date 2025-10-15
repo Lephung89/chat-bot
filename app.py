@@ -4,7 +4,8 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain.chains import ConversationalRetrievalChain
-import google.generativeai as genai
+import requests
+import json
 from langchain.memory import ConversationBufferWindowMemory
 from langchain.prompts import PromptTemplate
 import os
@@ -384,49 +385,66 @@ def create_conversational_chain(vector_store, llm):
 @st.cache_resource
 def get_gemini_llm():
     """
-    Khởi tạo Gemini bằng Google Generative AI SDK
-    ĐƠN GIẢN và HOẠT ĐỘNG ỔN ĐỊNH
+    Tạo Gemini client dùng REST API trực tiếp
+    GIẢI PHÁP CUỐI CÙNG - LUÔN HOẠT ĐỘNG
     """
     if not gemini_api_key:
         st.error("❌ Thiếu GEMINI_API_KEY!")
         st.stop()
     
+    # Test API key
+    test_url = f"https://generativelanguage.googleapis.com/v1/models?key={gemini_api_key}"
+    
     try:
-        # Configure API
-        genai.configure(api_key=gemini_api_key)
+        response = requests.get(test_url, timeout=10)
         
-        # Thử từng model theo thứ tự ưu tiên
-        model_names = ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro"]
-        
-        for model_name in model_names:
-            try:
-                model = genai.GenerativeModel(
-                    model_name=model_name,
-                    generation_config={
-                        "temperature": 0.3,
-                        "top_p": 0.95,
-                        "top_k": 40,
-                        "max_output_tokens": 2000,
-                    }
-                )
+        if response.status_code == 200:
+            models_data = response.json()
+            available_models = [m['name'] for m in models_data.get('models', [])]
+            
+            # Tìm model tốt nhất có sẵn
+            preferred_models = [
+                'models/gemini-1.5-flash-latest',
+                'models/gemini-1.5-flash',
+                'models/gemini-1.5-pro-latest',
+                'models/gemini-1.5-pro',
+                'models/gemini-pro'
+            ]
+            
+            selected_model = None
+            for model in preferred_models:
+                if model in available_models:
+                    selected_model = model
+                    break
+            
+            if not selected_model and available_models:
+                # Nếu không có model ưa thích, lấy model đầu tiên
+                selected_model = available_models[0]
+            
+            if selected_model:
+                st.success(f"✅ Đã kết nối Gemini: {selected_model}")
+                return {
+                    'api_key': gemini_api_key,
+                    'model': selected_model,
+                    'available_models': available_models
+                }
+            else:
+                st.error("❌ Không tìm thấy model nào!")
+                st.stop()
                 
-                # Test model
-                test_response = model.generate_content("Xin chào")
-                
-                if test_response.text:
-                    st.success(f"✅ Đã kết nối Google Gemini: {model_name}")
-                    return model
-                    
-            except Exception as e:
-                st.warning(f"⚠️ {model_name} không khả dụng: {str(e)[:80]}")
-                continue
-        
-        # Nếu tất cả đều fail
-        st.error("❌ Không thể kết nối Gemini!")
+        elif response.status_code == 400:
+            st.error("❌ API key không hợp lệ!")
+            st.info("Lấy API key mới tại: https://aistudio.google.com/app/apikey")
+            st.stop()
+        else:
+            st.error(f"❌ Lỗi API: {response.status_code}")
+            st.stop()
+            
+    except requests.exceptions.Timeout:
+        st.error("❌ Timeout khi kết nối Gemini API")
         st.stop()
-        
     except Exception as e:
-        st.error(f"❌ Lỗi cấu hình Gemini API: {e}")
+        st.error(f"❌ Lỗi: {e}")
         st.info("""
         **Hướng dẫn:**
         1. Lấy API key: https://aistudio.google.com/app/apikey
@@ -434,12 +452,60 @@ def get_gemini_llm():
         ```
         GEMINI_API_KEY = "AIzaSy..."
         ```
-        3. Enable Gemini API tại Google Cloud Console
         """)
         st.stop()
 
-def answer_from_external_api(prompt, llm, question_category):
-    """Trả lời từ Google Generative AI SDK"""
+def call_gemini_api(llm_config, prompt):
+    """
+    Gọi Gemini API bằng REST API
+    """
+    api_key = llm_config['api_key']
+    model = llm_config['model']
+    
+    # API endpoint
+    url = f"https://generativelanguage.googleapis.com/v1/{model}:generateContent?key={api_key}"
+    
+    # Request body
+    payload = {
+        "contents": [{
+            "parts": [{"text": prompt}]
+        }],
+        "generationConfig": {
+            "temperature": 0.3,
+            "topK": 40,
+            "topP": 0.95,
+            "maxOutputTokens": 2000,
+        }
+    }
+    
+    headers = {"Content-Type": "application/json"}
+    
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=30)
+        
+        if response.status_code == 200:
+            data = response.json()
+            
+            # Extract text từ response
+            if 'candidates' in data and len(data['candidates']) > 0:
+                candidate = data['candidates'][0]
+                if 'content' in candidate and 'parts' in candidate['content']:
+                    parts = candidate['content']['parts']
+                    if len(parts) > 0 and 'text' in parts[0]:
+                        return parts[0]['text']
+            
+            return "Xin lỗi, không nhận được phản hồi từ AI."
+            
+        else:
+            error_msg = response.json().get('error', {}).get('message', 'Unknown error')
+            return f"Lỗi API: {error_msg}"
+            
+    except requests.exceptions.Timeout:
+        return "Lỗi: Timeout khi gọi API"
+    except Exception as e:
+        return f"Lỗi: {str(e)}"
+def answer_from_external_api(prompt, llm_config, question_category):
+    """Trả lời từ Gemini REST API"""
     enhanced_prompt = f"""
 Bạn là chuyên gia tư vấn {question_category.lower()} của Đại học Luật TPHCM.
 
@@ -461,9 +527,7 @@ Trả lời thân thiện, chuyên nghiệp bằng tiếng Việt:
 """
     
     try:
-        # Google Generative AI SDK
-        response = llm.generate_content(enhanced_prompt)
-        answer = response.text
+        answer = call_gemini_api(llm_config, enhanced_prompt)
         
         # Thay thế placeholder còn sót
         replacements = {
