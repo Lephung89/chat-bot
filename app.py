@@ -18,8 +18,11 @@ import glob
 from pathlib import Path
 from dotenv import load_dotenv
 import base64
-import warnings
+import warnings, logging
 warnings.filterwarnings("ignore")
+logging.getLogger().setLevel(logging.ERROR)
+debug = False
+verbose = False
 
 
 def get_base64_of_image(path):
