@@ -44,21 +44,7 @@ st.set_page_config(
 # CSS tối ưu
 st.markdown("""
 <style>
-/* Ẩn nút Fork và GitHub trong header Streamlit */
-header[data-testid="stHeader"] button[data-testid="stToolbarActionButton"] svg {
-    display: none !important;
-}
-header[data-testid="stHeader"] button[data-testid="stToolbarActionButton"] div:has(svg) {
-    display: none !important;
-}
-header[data-testid="stHeader"] a[href*="github.com"] {
-    display: none !important;
-}
 
-/* Giữ lại nút menu ⋮ */
-header[data-testid="stHeader"] button[kind="header"][aria-label="Main menu"] {
-    display: inline-flex !important;
-}
 .header-container {
     background: linear-gradient(90deg, #003366, #004c99);
     color: white;
@@ -84,6 +70,7 @@ header[data-testid="stHeader"] button[kind="header"][aria-label="Main menu"] {
     margin-top: 0.2rem;
     opacity: 0.85;
 }
+
 [data-testid="stToolbarActionButtonIcon"],[data-testid="stToolbarActionButtonLabel"] {
     display: none !important;
 }
