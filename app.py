@@ -44,12 +44,16 @@ st.set_page_config(
 # CSS tối ưu
 st.markdown("""
 <style>
-/* Ẩn nút Fork hoặc biểu tượng GitHub ở góc phải trên */
-a[href*="github.com"][aria-label*="Fork"],
-button[title="View app source code"],
-a[href*="github.com"] svg {
+/* Ẩn nút Fork và biểu tượng GitHub trên header Streamlit Cloud */
+header[data-testid="stHeader"] a[href*="github.com"],
+header[data-testid="stHeader"] svg[data-testid="stIconGithub"] {
     display: none !important;
     visibility: hidden !important;
+}
+
+/* Giữ lại menu ba chấm (⋮) */
+header[data-testid="stHeader"] button[kind="header"] {
+    display: inline-flex !important;
 }
 .header-container {
     background: linear-gradient(90deg, #003366, #004c99);
