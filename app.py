@@ -711,7 +711,7 @@ def main():
                     # XỬ LÝ TRỰC TIẾP không dùng chain
                     if retriever:
                         # Lấy context từ vectorstore
-                        docs = retriever.get_relevant_documents(prompt)
+                        docs = retriever.invoke(prompt)
                         context = "\n\n".join([doc.page_content for doc in docs[:3]])
                         
                         # Tạo prompt với context
