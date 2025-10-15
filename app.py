@@ -730,8 +730,8 @@ Câu hỏi: {prompt}
 
 Hãy trả lời dựa trên thông tin tham khảo ở trên. Nếu không có thông tin, hãy tư vấn chung và khuyến khích liên hệ trực tiếp.
 """
-                        response = llm.generate_content(full_prompt)
-                        answer = response.text
+                        answer = call_gemini_api(llm, full_prompt)
+
                     else:
                         # Không có vectorstore, dùng API thuần
                         answer = answer_from_external_api(prompt, llm, category)
