@@ -655,8 +655,8 @@ def main():
     else:
         prompt = st.chat_input("💬 Hãy đặt câu hỏi...")
     if "pending_question" in st.session_state and st.session_state.pending_question:
-    prompt = st.session_state.pending_question
-    st.session_state.pending_question = None
+        prompt = st.session_state.pending_question
+        st.session_state.pending_question = None
     
     if prompt:
         st.session_state.first_visit = False
