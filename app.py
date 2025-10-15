@@ -11,7 +11,7 @@ import os
 import pickle
 import json
 from datetime import datetime
-import gdown
+import requests
 import tempfile
 import glob
 from pathlib import Path
@@ -34,7 +34,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# CSS tối ưu hơn
+# CSS tối ưu
 st.markdown("""
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
@@ -62,16 +62,6 @@ st.markdown("""
         border-radius: 15px;
         margin: 1rem 0;
         box-shadow: 0 5px 15px rgba(0,0,0,0.1);
-    }
-    
-    .user-message {
-        background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
-        border-left: 5px solid #2196f3;
-    }
-    
-    .assistant-message {
-        background: linear-gradient(135deg, #f3e5f5 0%, #e1bee7 100%);
-        border-left: 5px solid #9c27b0;
     }
     
     .category-badge {
@@ -123,9 +113,22 @@ st.markdown("""
 
 # Load biến môi trường
 load_dotenv()
-gemini_api_key = st.secrets.get("GEMINI_API_KEY") or os.getenv("GEMINI_API_KEY")
-GDRIVE_VECTORSTORE_ID = st.secrets.get("GDRIVE_VECTORSTORE_ID") or os.getenv("GDRIVE_VECTORSTORE_ID")
-GDRIVE_METADATA_ID = st.secrets.get("GDRIVE_METADATA_ID") or os.getenv("GDRIVE_METADATA_ID")
+
+# ĐỌC API KEY TỪ SECRETS TRƯỚC, SAU ĐÓ MỚI ĐẾN .env
+try:
+    gemini_api_key = st.secrets["GEMINI_API_KEY"]
+except:
+    gemini_api_key = os.getenv("GEMINI_API_KEY")
+
+try:
+    GDRIVE_VECTORSTORE_ID = st.secrets["GDRIVE_VECTORSTORE_ID"]
+except:
+    GDRIVE_VECTORSTORE_ID = os.getenv("GDRIVE_VECTORSTORE_ID")
+
+try:
+    GDRIVE_METADATA_ID = st.secrets["GDRIVE_METADATA_ID"]
+except:
+    GDRIVE_METADATA_ID = os.getenv("GDRIVE_METADATA_ID")
 
 # Cấu hình đường dẫn
 DOCUMENTS_PATH = "documents"
@@ -168,12 +171,33 @@ def load_embeddings():
 
 embeddings = load_embeddings()
 
-def download_from_gdrive(file_id, output_path):
-    """Download file từ Google Drive"""
+def download_from_gdrive_direct(file_id, output_path):
+    """
+    Download file từ Google Drive bằng requests (không dùng gdown)
+    File phải được share công khai: Anyone with the link
+    """
     try:
-        url = f'https://drive.google.com/uc?id={file_id}'
-        gdown.download(url, output_path, quiet=True)
+        # URL download trực tiếp từ GDrive
+        url = f"https://drive.google.com/uc?export=download&id={file_id}"
+        
+        session = requests.Session()
+        response = session.get(url, stream=True)
+        
+        # Xử lý virus scan warning của GDrive (file lớn)
+        for key, value in response.cookies.items():
+            if key.startswith('download_warning'):
+                params = {'export': 'download', 'id': file_id, 'confirm': value}
+                response = session.get(url, params=params, stream=True)
+                break
+        
+        # Lưu file
+        with open(output_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=32768):
+                if chunk:
+                    f.write(chunk)
+        
         return True
+        
     except Exception as e:
         st.warning(f"⚠️ Không thể tải từ GDrive: {e}")
         return False
@@ -193,6 +217,7 @@ def get_file_hash(file_path):
 def load_cached_vectorstore():
     """Load vector store từ Google Drive"""
     if not GDRIVE_VECTORSTORE_ID or not GDRIVE_METADATA_ID:
+        st.info("ℹ️ Chưa cấu hình Google Drive, sử dụng xử lý local")
         return None, {}
     
     temp_dir = tempfile.mkdtemp()
@@ -200,9 +225,10 @@ def load_cached_vectorstore():
     metadata_path = os.path.join(temp_dir, "metadata.json")
     
     try:
-        if not download_from_gdrive(GDRIVE_VECTORSTORE_ID, vectorstore_path):
+        # Download bằng requests thay vì gdown
+        if not download_from_gdrive_direct(GDRIVE_VECTORSTORE_ID, vectorstore_path):
             return None, {}
-        if not download_from_gdrive(GDRIVE_METADATA_ID, metadata_path):
+        if not download_from_gdrive_direct(GDRIVE_METADATA_ID, metadata_path):
             return None, {}
         
         with open(vectorstore_path, 'rb') as f:
@@ -216,10 +242,21 @@ def load_cached_vectorstore():
         os.remove(metadata_path)
         os.rmdir(temp_dir)
         
+        st.success("✅ Đã load vectorstore từ Google Drive")
         return vectorstore, metadata
         
     except Exception as e:
-        st.error(f"❌ Lỗi load vectorstore: {e}")
+        st.warning(f"⚠️ Không thể load từ GDrive: {e}")
+        # Cleanup nếu có lỗi
+        try:
+            if os.path.exists(vectorstore_path):
+                os.remove(vectorstore_path)
+            if os.path.exists(metadata_path):
+                os.remove(metadata_path)
+            if os.path.exists(temp_dir):
+                os.rmdir(temp_dir)
+        except:
+            pass
         return None, {}
 
 def process_documents(file_paths):
@@ -276,22 +313,24 @@ def create_vector_store(documents):
 @st.cache_resource
 def initialize_vectorstore():
     """Khởi tạo vectorstore"""
-    # Thử load từ cache trước
+    # Thử load từ GDrive trước
     vectorstore, metadata = load_cached_vectorstore()
     if vectorstore:
         return vectorstore, metadata.get('stats', {})
     
-    # Nếu không có cache, xử lý local files
+    # Nếu không có GDrive, xử lý local files
+    st.info("ℹ️ Đang xử lý tài liệu local...")
     current_files = get_document_files()
+    
     if not current_files:
-        st.warning("⚠️ Không tìm thấy file nào")
+        st.warning("⚠️ Không tìm thấy file nào trong thư mục documents")
         return None, {}
     
     with st.spinner("🔄 Đang xử lý tài liệu..."):
         documents, processed, failed = process_documents(current_files)
         
         if not documents:
-            st.error("❌ Không thể xử lý file")
+            st.error("❌ Không thể xử lý file nào")
             return None, {}
         
         vectorstore = create_vector_store(documents)
@@ -304,6 +343,7 @@ def initialize_vectorstore():
                 'total_chunks': vectorstore.index.ntotal,
                 'last_updated': datetime.now().isoformat()
             }
+            st.success(f"✅ Đã xử lý {len(processed)} files thành công!")
             return vectorstore, stats
     
     return None, {}
@@ -357,22 +397,38 @@ def create_conversational_chain(vector_store, llm):
 
 @st.cache_resource
 def get_gemini_llm():
-    """Khởi tạo Gemini LLM với cấu hình tối ưu"""
+    """
+    Khởi tạo Gemini LLM với tên model CHÍNH XÁC
+    
+    QUAN TRỌNG: langchain-google-genai chỉ hỗ trợ:
+    - gemini-pro (stable)
+    - gemini-1.5-pro-latest 
+    - gemini-1.5-flash-latest
+    
+    KHÔNG hỗ trợ: gemini-1.5-flash (thiếu -latest)
+    """
+    if not gemini_api_key:
+        st.error("❌ Thiếu GEMINI_API_KEY!")
+        st.stop()
+    
     try:
-        return GoogleGenerativeAI(
-            model="gemini-1.5-flash",  # Hoặc thử "models/gemini-1.5-flash"
+        # Thử model gemini-pro trước (ổn định nhất)
+        llm = GoogleGenerativeAI(
+            model="gemini-pro",  # Model ổn định nhất
             google_api_key=gemini_api_key,
             temperature=0.3,
             max_output_tokens=2000
         )
+        
+        # Test model
+        llm.invoke("Hello")
+        st.success("✅ Đã kết nối Gemini Pro")
+        return llm
+        
     except Exception as e:
-        st.error(f"❌ Lỗi khởi tạo Gemini: {e}")
-        # Fallback sang model khác nếu cần
-        return GoogleGenerativeAI(
-            model="gemini-pro",
-            google_api_key=gemini_api_key,
-            temperature=0.3
-        )
+        st.error(f"❌ Lỗi kết nối Gemini: {e}")
+        st.info("💡 Hãy kiểm tra API key tại: https://makersuite.google.com/app/apikey")
+        st.stop()
 
 def answer_from_external_api(prompt, llm, question_category):
     """Trả lời từ API"""
@@ -449,7 +505,16 @@ def display_quick_questions():
 def main():
     # Kiểm tra API key
     if not gemini_api_key:
-        st.error("⚠️ Thiếu GEMINI_API_KEY! Vui lòng cấu hình trong Streamlit Secrets")
+        st.error("⚠️ **Thiếu GEMINI_API_KEY!**")
+        st.info("""
+        **Cách cấu hình:**
+        1. Vào Settings → Secrets trên Streamlit Cloud
+        2. Thêm:
+        ```
+        GEMINI_API_KEY = "your-api-key"
+        ```
+        3. Lấy API key tại: https://makersuite.google.com/app/apikey
+        """)
         st.stop()
     
     # Khởi tạo session state
@@ -474,11 +539,28 @@ def main():
         st.markdown("### ⚙️ Cài đặt")
         
         # Thông tin hệ thống
-        with st.expander("📊 Thông tin hệ thống", expanded=False):
-            st.info(f"""
-            **Trạng thái:**
-            - ✅ Gemini API: {'Đã kết nối' if gemini_api_key else '❌ Chưa cấu hình'}
-            - 📁 Documents: {len(get_document_files())} files
+        with st.expander("📊 Trạng thái hệ thống", expanded=False):
+            st.success("✅ Gemini API: Đã kết nối")
+            st.info(f"📁 Documents: {len(get_document_files())} files")
+            
+            if GDRIVE_VECTORSTORE_ID:
+                st.info("☁️ Google Drive: Đã cấu hình")
+            else:
+                st.warning("⚠️ Google Drive: Chưa cấu hình")
+        
+        # Hướng dẫn cấu hình GDrive
+        with st.expander("📖 Hướng dẫn Google Drive", expanded=False):
+            st.markdown("""
+            **Để sử dụng Google Drive:**
+            
+            1. Upload file `vectorstore.pkl` và `metadata.json` lên GDrive
+            2. Click chuột phải → Share → Anyone with the link
+            3. Copy File ID từ URL (phần sau `/d/` và trước `/view`)
+            4. Thêm vào Secrets:
+            ```
+            GDRIVE_VECTORSTORE_ID = "file-id-1"
+            GDRIVE_METADATA_ID = "file-id-2"
+            ```
             """)
         
         # Nút làm mới
@@ -494,8 +576,8 @@ def main():
         **Web:** www.hcmulaw.edu.vn
         """)
 
-    # Khởi tạo vectorstore
-    with st.spinner("🔄 Đang khởi tạo hệ thống..."):
+    # Khởi tạo vectorstore và LLM
+    with st.spinner("🔄 Đang khởi động hệ thống..."):
         vectorstore, stats = initialize_vectorstore()
         llm = get_gemini_llm()
         chain = create_conversational_chain(vectorstore, llm) if vectorstore else None
@@ -581,7 +663,7 @@ Lỗi: {str(e)}
         <p>📞 Hotline: 1900 5555 14 | Email: tuyensinh@hcmulaw.edu.vn</p>
         <p>🌐 www.hcmulaw.edu.vn | 📘 facebook.com/hcmulaw</p>
         <p style="margin-top:1rem;opacity:0.8;font-size:0.85em;">
-            🤖 Chatbot v2.0 | Phát triển bởi Lvphung - CNTT
+            🤖 Chatbot v2.1 | Phát triển bởi Lvphung - CNTT
         </p>
     </div>
     """, unsafe_allow_html=True)
