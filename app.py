@@ -398,49 +398,53 @@ def create_conversational_chain(vector_store, llm):
 @st.cache_resource
 def get_gemini_llm():
     """
-    Khởi tạo Gemini LLM - SỬ DỤNG ChatGoogleGenerativeAI
+    Khởi tạo Gemini LLM với tên model CHÍNH XÁC theo Google AI
     
-    Models được hỗ trợ:
-    - gemini-1.5-flash (khuyên dùng - nhanh, rẻ)
-    - gemini-1.5-pro (mạnh hơn nhưng chậm hơn)
-    - gemini-pro (phiên bản cũ)
+    QUAN TRỌNG: Phải dùng format models/model-name cho v1beta API
     """
     if not gemini_api_key:
         st.error("❌ Thiếu GEMINI_API_KEY!")
         st.stop()
     
-    try:
-        # SỬ DỤNG ChatGoogleGenerativeAI thay vì GoogleGenerativeAI
-        llm = ChatGoogleGenerativeAI(
-            model="gemini-1.5-flash",  # Model mới nhất, nhanh và rẻ
-            google_api_key=gemini_api_key,
-            temperature=0.3,
-            max_output_tokens=2000,
-            convert_system_message_to_human=True  # Quan trọng cho compatibility
-        )
-        
-        # Test model
-        test_response = llm.invoke("Xin chào")
-        st.success(f"✅ Đã kết nối Gemini 1.5 Flash")
-        return llm
-        
-    except Exception as e:
-        # Fallback sang gemini-pro nếu lỗi
+    # Danh sách models theo thứ tự ưu tiên
+    model_list = [
+        "models/gemini-1.5-flash-latest",
+        "models/gemini-1.5-pro-latest", 
+        "models/gemini-pro",
+    ]
+    
+    for model_name in model_list:
         try:
-            st.warning(f"⚠️ Gemini 1.5 Flash lỗi, đang thử Gemini Pro...")
             llm = ChatGoogleGenerativeAI(
-                model="gemini-pro",
+                model=model_name,
                 google_api_key=gemini_api_key,
                 temperature=0.3,
+                max_output_tokens=2000,
                 convert_system_message_to_human=True
             )
+            
+            # Test model
             llm.invoke("Test")
-            st.success("✅ Đã kết nối Gemini Pro")
+            st.success(f"✅ Đã kết nối {model_name}")
             return llm
-        except Exception as e2:
-            st.error(f"❌ Lỗi kết nối Gemini: {e2}")
-            st.info("💡 Kiểm tra API key tại: https://makersuite.google.com/app/apikey")
-            st.stop()
+            
+        except Exception as e:
+            if "not found" in str(e).lower():
+                st.warning(f"⚠️ {model_name} không khả dụng, thử model khác...")
+                continue
+            else:
+                st.error(f"❌ Lỗi: {e}")
+                continue
+    
+    # Nếu tất cả model đều lỗi
+    st.error("❌ Không thể kết nối đến bất kỳ Gemini model nào!")
+    st.info("""
+    **Hãy thử:**
+    1. Kiểm tra API key tại: https://aistudio.google.com/app/apikey
+    2. Đảm bảo API key có quyền truy cập Gemini API
+    3. Kiểm tra quota của API key
+    """)
+    st.stop()
 
 def answer_from_external_api(prompt, llm, question_category):
     """Trả lời từ API - Compatible với ChatGoogleGenerativeAI"""
