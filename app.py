@@ -44,156 +44,38 @@ st.set_page_config(
 # CSS tối ưu
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;600;700&display=swap');
-    * { font-family: 'Roboto', sans-serif; }
-    .main-header {
-        background: linear-gradient(90deg, #1e72 0%, #2a5298 100%);
-        padding: 2rem;
-        border-radius: 5px;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-        color: white;
-        text-align: center;
-        margin-bottom: 2rem;
-    }
-    .header-logo {
-        height: 100px;
-        margin-bottom: 1rem;
-    }
-    .header-title {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        gap: 1rem;
-        margin-bottom: 0.5rem;
-    }
-    .header-title img {
-        height: 50px;
-    }
-    .main-header h1 {
-        font-size: 2rem;
-        font-weight: 600;
-    }
-    .main-header h3 {
-        font-size: 1.2rem;
-        font-weight: 400;
-        opacity: 0.8;
-    }
-    .main-header p {
-        font-size: 0.9rem;
-        opacity: 0.0.7;
-    }
-    .chat-message {
-        background: #f8f9fa;
-        padding: 1rem;
-        border-radius: 0.8rem;
-        margin: 1rem 0;
-        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-    }
-    .user-message {
-        background: #e6f3ff;
-        border-left: 4px solid #007bff;
-    }
-    .assistant-message {
-        background: #f0f9ff;
-        border-left: 4px solid #28a745;
-    }
-    .sidebar-info {
-        background: #ffffff;
-        padding: 1rem;
-        border: 1px solid #ddd;
-        border-radius: 4px;
-        margin: 1rem 0;
-    }
-    .metric-card {
-        background: flex#fff;
-        padding: 1rem;
-        border-radius: 4px;
-        text-align: center;
-        box-shadow: 0 1px 2px rgba(0,0,0,0,0.1);
-        margin: 0.5rem 0;
-    }
-    .metric-value {
-        font-size: 1.5rem;
-        font-weight: bold;
-        color: #333;
-    }
-    .metric-label {
-        font-size: 0.8rem;
-        color: #666;
-    }
-    .info-card {
-        background: #fff3cd;
-        border: 1px solid #ffeeba;
-        padding: 1rem;
-        border-radius: 4px;
-        margin-bottom: 1rem;
-    }
-    .success-card {
-        background: #d4edda;
-        border: 1px solid #c3e6cb;
-        padding: 1rem;
-        border-radius: 4px;
-        margin-bottom: 1rem;
-    }
-    .warning-card {
-        background: #fff3cd;
-        border: 1px solid #ffeeba;
-        padding: 1rem;
-        border-radius: 4px;
-        margin-bottom: 1rem;
-    }
-    .category-badge {
-        display: inline-block;
-        padding: 0.2rem 0.6rem;
-        border-radius: 12px;
-        font-size: 0.7rem;
-        font-weight: bold;
-        margin: 0.1rem;
-    }
-    .badge-tuyensinh { background: #007bff; color: white; }
-    .badge-hocphi { background: #28a745; color: white; }
-    .badge-ch { background: #17a2b8; color: white; }
-    .badge-sinhhot { background: #ffc107; color: black; }
-    .badge-hotro { background: #dc3545; color: white; }
-    .badge-totnghiep { background: #6c757d; color: white; }
-    .quick-actions { display: grid; gap: 1rem; }
-    .action-button {
-        background: #007bff;
-        color: white;
-        padding: 0.8rem;
-        border-radius: 4px;
-        text-align: center;
-        text-decoration: none;
-    }
-    .action-button:hover {
-        background: #0056b3;
-    }
-    .footer {
-        background: #333;
-        color: white;
-        padding: 2rem;
-        text-align: center;
-        margin-top: 2rem;
-    }
-    .footer-grid {
-        display: grid;
-        gap: 1rem;
-        margin-bottom: 1rem;
-    }
-    .footer-section h4 {
-        color: #007bff;
-    }
-    .stButton > button {
-        background-color: #007bff;
-        color: white;
-        border-radius: 4px;
-    }
-    .chat-input {
-        border: 1px solid #ddd;
-        border-radius: 4px;
-        padding: 0.5rem;
-    }
+.header-container {
+    background: linear-gradient(90deg, #003366, #004c99);
+    color: white;
+    padding: 24px 0;
+    border-radius: 16px;
+    text-align: center;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.25);
+    margin-bottom: 20px;
+}
+.header-container h1 {
+    font-size: 2rem;
+    margin-bottom: 0.4rem;
+    font-weight: 700;
+}
+.header-container h3 {
+    font-size: 1.2rem;
+    font-weight: 400;
+    margin-top: 0;
+    opacity: 0.9;
+}
+.header-container p {
+    font-size: 1rem;
+    margin-top: 0.2rem;
+    opacity: 0.85;
+}
 </style>
+
+<div class="header-container">
+    <h1>🤖 Chatbot Tư Vấn Tuyển Sinh</h1>
+    <h3>Trường Đại học Luật TP. Hồ Chí Minh</h3>
+    <p>💬 Hỗ trợ 24/7 &nbsp; | &nbsp; 🎓 Tư vấn chuyên nghiệp</p>
+</div>
 """, unsafe_allow_html=True)
 
 
@@ -285,7 +167,7 @@ def download_from_gdrive_direct(file_id, output_path):
         return True
         
     except Exception as e:
-        st.warning(f"⚠️ Không thể tải từ GDrive: {e}")
+        #st.warning(f"⚠️ Không thể tải từ GDrive: {e}")
         return False
 
 def get_document_files():
@@ -303,7 +185,7 @@ def get_file_hash(file_path):
 def load_cached_vectorstore():
     """Load vector store từ Google Drive"""
     if not GDRIVE_VECTORSTORE_ID or not GDRIVE_METADATA_ID:
-        st.info("ℹ️ Chưa cấu hình Google Drive, sử dụng xử lý local")
+        #st.info("ℹ️ Chưa cấu hình Google Drive, sử dụng xử lý local")
         return None, {}
     
     temp_dir = tempfile.mkdtemp()
@@ -328,7 +210,7 @@ def load_cached_vectorstore():
         os.remove(metadata_path)
         os.rmdir(temp_dir)
         
-        st.success("✅ Đã load vectorstore từ Google Drive")
+        #st.success("✅ Đã load vectorstore từ Google Drive")
         return vectorstore, metadata
         
     except Exception as e:
@@ -507,7 +389,7 @@ def get_gemini_llm():
                 selected_model = available_models[0]
             
             if selected_model:
-                st.success(f"✅ Đã kết nối Gemini: {selected_model}")
+                #st.success(f"✅ Đã kết nối Gemini: {selected_model}")
                 return {
                     'api_key': gemini_api_key,
                     'model': selected_model,
