@@ -44,79 +44,37 @@ st.set_page_config(
 # CSS tối ưu
 st.markdown("""
 <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
-    
-    * { font-family: 'Inter', sans-serif; }
-    
-    .main-header {
-        background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
-        padding: 2rem;
-        border-radius: 20px;
-        color: white;
-        text-align: center;
-        margin-bottom: 2rem;
-        box-shadow: 0 10px 30px rgba(30, 60, 114, 0.3);
-    }
-    
-    .main-header h1 {
-        font-size: 2.2rem;
-        font-weight: 700;
-        margin: 0.5rem 0;
-    }
-    
-    .chat-message {
-        padding: 1.5rem;
-        border-radius: 15px;
-        margin: 1rem 0;
-        box-shadow: 0 5px 15px rgba(0,0,0,0.1);
-    }
-    
-    .category-badge {
-        display: inline-block;
-        padding: 0.4rem 0.8rem;
-        border-radius: 15px;
-        font-size: 0.75rem;
-        font-weight: 600;
-        margin-bottom: 0.5rem;
-    }
-    
-    .badge-tuyensinh { background: #e3f2fd; color: #1565c0; }
-    .badge-hocphi { background: #e8f5e8; color: #2e7d32; }
-    .badge-chuongtrinh { background: #f3e5f5; color: #6a1b9a; }
-    
-    .info-card {
-        background: linear-gradient(135deg, #fff3e0 0%, #ffe0b2 100%);
-        border: 1px solid #ffb74d;
-        border-radius: 15px;
-        padding: 1.5rem;
-        margin: 1rem 0;
-    }
-    
-    .footer {
-        background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
-        color: white;
-        padding: 2rem;
-        border-radius: 15px;
-        margin-top: 3rem;
-        text-align: center;
-    }
-    
-    .stButton>button {
-        background: linear-gradient(135deg, #2196f3 0%, #1976d2 100%);
-        color: white;
-        border: none;
-        border-radius: 10px;
-        padding: 0.5rem 1rem;
-        font-weight: 500;
-        transition: all 0.3s ease;
-    }
-    
-    .stButton>button:hover {
-        background: linear-gradient(135deg, #1976d2 0%, #1565c0 100%);
-        transform: translateY(-2px);
-    }
+.chatbot-header {
+    background: linear-gradient(135deg, #003366, #004c99);
+    color: white;
+    border-radius: 16px;
+    padding: 24px;
+    text-align: center;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+}
+.chatbot-header h1 {
+    font-size: 1.8rem;
+    margin-bottom: 0.2rem;
+}
+.chatbot-header h3 {
+    font-size: 1.2rem;
+    font-weight: 400;
+    margin-top: 0;
+    opacity: 0.9;
+}
+.chatbot-header p {
+    font-size: 1rem;
+    opacity: 0.85;
+}
 </style>
+
+<div class="chatbot-header">
+    <h1>🤖 Chatbot Tư Vấn Tuyển Sinh</h1>
+    <h3>Trường Đại học Luật TP. Hồ Chí Minh</h3>
+    <p>💬 Hỗ trợ 24/7 &nbsp; | &nbsp; 🎓 Tư vấn chuyên nghiệp</p>
+</div>
 """, unsafe_allow_html=True)
+
 
 # Load biến môi trường
 load_dotenv()
