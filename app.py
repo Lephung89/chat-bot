@@ -214,7 +214,8 @@ def load_cached_vectorstore():
         return vectorstore, metadata
         
     except Exception as e:
-        st.warning(f"⚠️ Không thể load từ GDrive: {e}")
+        if debug:
+            st.warning(f"⚠️ Không thể load từ GDrive: {e}")
         # Cleanup nếu có lỗi
         try:
             if os.path.exists(vectorstore_path):
@@ -287,7 +288,8 @@ def initialize_vectorstore():
         return vectorstore, metadata.get('stats', {})
     
     # Nếu không có GDrive, xử lý local files
-    st.info("ℹ️ Đang xử lý tài liệu local...")
+    if debug:
+        st.info("ℹ️ Đang xử lý tài liệu local...")
     current_files = get_document_files()
     
     if not current_files:
@@ -561,16 +563,7 @@ def main():
     if "first_visit" not in st.session_state:
         st.session_state.first_visit = True
 
-    # Header
-    logo_base64 = get_base64_of_image("logo.jpg")
-    st.markdown(f"""
-    <div class="main-header">
-        {f'<img src="data:image/jpg;base64,{logo_base64}" style="width:80px;border-radius:50%;margin-bottom:1rem;">' if logo_base64 else ''}
-        <h1>🤖 Chatbot Tư Vấn Tuyển Sinh</h1>
-        <h3>Trường Đại học Luật TP. Hồ Chí Minh</h3>
-        <p>💬 Hỗ trợ 24/7 | 🎓 Tư vấn chuyên nghiệp</p>
-    </div>
-    """, unsafe_allow_html=True)
+
 
     # Sidebar
     with st.sidebar:
