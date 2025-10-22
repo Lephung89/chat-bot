@@ -430,9 +430,9 @@ def get_gemini_llm():
         **Hướng dẫn:**
         1. Lấy API key: https://aistudio.google.com/app/apikey
         2. Thêm vào Streamlit Secrets:
-        ```
+```
         GEMINI_API_KEY = "AIzaSy..."
-        ```
+```
         """)
         st.stop()
 
@@ -485,6 +485,7 @@ def call_gemini_api(llm_config, prompt):
         return "Lỗi: Timeout khi gọi API"
     except Exception as e:
         return f"Lỗi: {str(e)}"
+
 def answer_from_external_api(prompt, llm_config, question_category):
     """Trả lời từ Gemini REST API"""
     enhanced_prompt = f"""
@@ -562,9 +563,9 @@ def main():
         **Cách cấu hình:**
         1. Vào Settings → Secrets trên Streamlit Cloud
         2. Thêm:
-        ```
+```
         GEMINI_API_KEY = "your-api-key"
-        ```
+```
         3. Lấy API key tại: https://makersuite.google.com/app/apikey
         """)
         st.stop()
@@ -575,8 +576,6 @@ def main():
     if "first_visit" not in st.session_state:
         st.session_state.first_visit = True
 
-
-
     # Sidebar
     with st.sidebar:
         st.markdown("### ⚙️ Cài đặt")
@@ -584,83 +583,100 @@ def main():
         # Thông tin hệ thống
         with st.expander("📊 Trạng thái hệ thống", expanded=False):
             st.success("✅ Gemini API: Đã kết nối")
-            st.info(f"📁 Documents: {len(get_document_files())} files")
+            
+            # Đếm file REAL-TIME
+            current_files = get_document_files()
+            st.info(f"📁 Documents: {len(current_files)} files")
+            
+            # Hiển thị danh sách file
+            if current_files:
+                st.markdown("**Danh sách file:**")
+                for file in current_files:
+                    st.text(f"- {os.path.basename(file)}")
+            
+            # Hiển thị stats
+            if 'vectorstore_stats' in st.session_state:
+                stats = st.session_state.vectorstore_stats
+                st.info(f"📦 Chunks: {stats.get('total_chunks', 0)}")
+                st.caption(f"Cập nhật: {stats.get('last_updated', 'N/A')[:19]}")
             
             if GDRIVE_VECTORSTORE_ID:
                 st.info("☁️ Google Drive: Đã cấu hình")
             else:
                 st.warning("⚠️ Google Drive: Chưa cấu hình")
-    with st.expander("📤 Upload tài liệu mới", expanded=False):
-        uploaded_files = st.file_uploader(
-            "Chọn file PDF, DOCX, TXT",
-            type=['pdf', 'docx', 'txt'],
-            accept_multiple_files=True,
-            key="file_uploader"
-        )
         
-        if uploaded_files:
-            if st.button("💾 Lưu và xử lý", use_container_width=True):
-                with st.spinner("🔄 Đang lưu file..."):
-                    saved_count = 0
-                    for uploaded_file in uploaded_files:
-                        try:
-                            # Lưu vào thư mục documents
-                            file_path = os.path.join(DOCUMENTS_PATH, uploaded_file.name)
-                            with open(file_path, "wb") as f:
-                                f.write(uploaded_file.getbuffer())
-                            saved_count += 1
-                        except Exception as e:
-                            st.error(f"Lỗi lưu {uploaded_file.name}: {e}")
-                    
-                    if saved_count > 0:
-                        st.success(f"✅ Đã lưu {saved_count} file!")
-                        
-                        # XÓA CACHE và REBUILD
-                        st.cache_resource.clear()
-                        if 'vectorstore_stats' in st.session_state:
-                            del st.session_state.vectorstore_stats
-                        
-                        st.info("🔄 Đang rebuild vectorstore...")
-                        st.rerun()
-    
-    # Nút Force Rebuild
-    st.markdown("---")
-    if st.button("⚡ Rebuild Vectorstore", use_container_width=True, type="primary"):
-        with st.spinner("🔄 Đang xử lý lại tất cả tài liệu..."):
-            # XÓA CACHE
-            st.cache_resource.clear()
-            if 'vectorstore_stats' in st.session_state:
-                del st.session_state.vectorstore_stats
+        # Upload file mới
+        with st.expander("📤 Upload tài liệu mới", expanded=False):
+            uploaded_files = st.file_uploader(
+                "Chọn file PDF, DOCX, TXT",
+                type=['pdf', 'docx', 'txt'],
+                accept_multiple_files=True,
+                key="file_uploader"
+            )
             
-            # Force rebuild
-            current_files = get_document_files()
-            
-            if not current_files:
-                st.error("❌ Không có file nào trong thư mục documents!")
-            else:
-                documents, processed, failed = process_documents(current_files)
+            if uploaded_files:
+                if st.button("💾 Lưu và xử lý", use_container_width=True):
+                    with st.spinner("🔄 Đang lưu file..."):
+                        saved_count = 0
+                        for uploaded_file in uploaded_files:
+                            try:
+                                # Lưu vào thư mục documents
+                                file_path = os.path.join(DOCUMENTS_PATH, uploaded_file.name)
+                                with open(file_path, "wb") as f:
+                                    f.write(uploaded_file.getbuffer())
+                                saved_count += 1
+                            except Exception as e:
+                                st.error(f"Lỗi lưu {uploaded_file.name}: {e}")
+                        
+                        if saved_count > 0:
+                            st.success(f"✅ Đã lưu {saved_count} file!")
+                            
+                            # XÓA CACHE và REBUILD
+                            st.cache_resource.clear()
+                            if 'vectorstore_stats' in st.session_state:
+                                del st.session_state.vectorstore_stats
+                            
+                            st.info("🔄 Đang rebuild vectorstore...")
+                            st.rerun()
+        
+        # Nút Force Rebuild
+        st.markdown("---")
+        if st.button("⚡ Rebuild Vectorstore", use_container_width=True, type="primary"):
+            with st.spinner("🔄 Đang xử lý lại tất cả tài liệu..."):
+                # XÓA CACHE
+                st.cache_resource.clear()
+                if 'vectorstore_stats' in st.session_state:
+                    del st.session_state.vectorstore_stats
                 
-                if documents:
-                    vectorstore = create_vector_store(documents)
-                    
-                    if vectorstore:
-                        stats = {
-                            'total_files': len(current_files),
-                            'processed_files': len(processed),
-                            'failed_files': len(failed),
-                            'total_chunks': vectorstore.index.ntotal,
-                            'last_updated': datetime.now().isoformat()
-                        }
-                        st.session_state.vectorstore_stats = stats
-                        st.success(f"✅ Đã xử lý {len(processed)} files!")
-                        st.info(f"📦 Tạo được {stats['total_chunks']} chunks")
-                        
-                        if failed:
-                            st.warning(f"⚠️ Không xử lý được {len(failed)} files")
+                # Force rebuild
+                current_files = get_document_files()
+                
+                if not current_files:
+                    st.error("❌ Không có file nào trong thư mục documents!")
                 else:
-                    st.error("❌ Không thể xử lý file nào")
-            
-            st.rerun()
+                    documents, processed, failed = process_documents(current_files)
+                    
+                    if documents:
+                        vectorstore = create_vector_store(documents)
+                        
+                        if vectorstore:
+                            stats = {
+                                'total_files': len(current_files),
+                                'processed_files': len(processed),
+                                'failed_files': len(failed),
+                                'total_chunks': vectorstore.index.ntotal,
+                                'last_updated': datetime.now().isoformat()
+                            }
+                            st.session_state.vectorstore_stats = stats
+                            st.success(f"✅ Đã xử lý {len(processed)} files!")
+                            st.info(f"📦 Tạo được {stats['total_chunks']} chunks")
+                            
+                            if failed:
+                                st.warning(f"⚠️ Không xử lý được {len(failed)} files")
+                    else:
+                        st.error("❌ Không thể xử lý file nào")
+                
+                st.rerun()
         
         # Hướng dẫn cấu hình GDrive
         with st.expander("📖 Hướng dẫn Google Drive", expanded=False):
@@ -671,18 +687,16 @@ def main():
             2. Click chuột phải → Share → Anyone with the link
             3. Copy File ID từ URL (phần sau `/d/` và trước `/view`)
             4. Thêm vào Secrets:
-            ```
-            GDRIVE_VECTORSTORE_ID = "file-id-1"
-            GDRIVE_METADATA_ID = "file-id-2"
-            ```
+        GDRIVE_VECTORSTORE_ID = "file-id-1"
+        GDRIVE_METADATA_ID = "file-id-2"
             """)
         
         # Nút làm mới
         if st.button("🔄 Làm mới dữ liệu", use_container_width=True):
-        st.cache_resource.clear()
-        st.session_state.clear()  # THÊM DÒNG NÀY
-        st.rerun()
-    
+            st.cache_resource.clear()
+            st.session_state.clear()
+            st.rerun()
+        
         st.markdown("---")
         st.markdown("""
         ### 📞 Liên hệ
@@ -691,21 +705,21 @@ def main():
         **Web:** www.hcmulaw.edu.vn
         """)
 
-# Khởi tạo vectorstore và LLM
-with st.spinner("🔄 Đang khởi động hệ thống..."):
-    vectorstore, stats = initialize_vectorstore()
-    
-    # LƯU STATS VÀO SESSION STATE
-    if stats:
-        st.session_state.vectorstore_stats = stats
-    
-    llm = get_gemini_llm()
-    
-    # Không dùng chain nữa, xử lý trực tiếp
-    if vectorstore:
-        retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
-    else:
-        retriever = None
+    # Khởi tạo vectorstore và LLM
+    with st.spinner("🔄 Đang khởi động hệ thống..."):
+        vectorstore, stats = initialize_vectorstore()
+        
+        # LƯU STATS VÀO SESSION STATE
+        if stats:
+            st.session_state.vectorstore_stats = stats
+        
+        llm = get_gemini_llm()
+        
+        # Không dùng chain nữa, xử lý trực tiếp
+        if vectorstore:
+            retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
+        else:
+            retriever = None
 
     # Hiển thị câu hỏi gợi ý nếu là lần đầu
     if not st.session_state.messages and st.session_state.first_visit:
@@ -715,6 +729,7 @@ with st.spinner("🔄 Đang khởi động hệ thống..."):
         <div class="info-card">
             <h4>💡 Hướng dẫn sử dụng:</h4>
             <ul>
+                <li>🎯 Chọn câu
                 <li>🎯 Chọn câu hỏi gợi ý hoặc nhập câu hỏi của bạn</li>
                 <li>💬 Đặt câu hỏi cụ thể để được tư vấn chính xác</li>
                 <li>📞 Liên hệ trực tiếp nếu cần hỗ trợ khẩn cấp</li>
@@ -814,7 +829,7 @@ _(Lỗi: {str(e)[:100]})_
         <p>📞 Hotline: 1900 5555 14 | Email: tuyensinh@hcmulaw.edu.vn</p>
         <p>🌐 www.hcmulaw.edu.vn | 📘 facebook.com/hcmulaw</p>
         <p style="margin-top:1rem;opacity:0.8;font-size:0.85em;">
-            🤖 Chatbot v2.1 | Phát triển bởi Lvphung - CNTT
+            🤖 Chatbot v2.2 | Phát triển bởi Lvphung - CNTT
         </p>
     </div>
     """, unsafe_allow_html=True)
