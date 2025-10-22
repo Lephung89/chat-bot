@@ -5,8 +5,6 @@ from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
 import requests
 import json
-from langchain.memory import ConversationBufferWindowMemory
-from langchain.prompts import PromptTemplate
 import os
 import pickle
 import json
