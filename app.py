@@ -283,58 +283,95 @@ def initialize_vectorstore() -> Tuple[Optional[object], Dict]:
 
 @st.cache_resource
 def get_gemini_config() -> Optional[Dict]:
-    """Get Gemini config"""
-    # Try multiple ways to get API key
+    """Get Gemini config - no validation"""
     api_key = None
     
-    # Method 1: Streamlit secrets (recommended for Cloud)
+    # Try secrets
     try:
         api_key = st.secrets["GEMINI_API_KEY"]
+        st.success(f"✅ API Key loaded: {api_key[:10]}...{api_key[-4:]}")
     except:
         pass
     
-    # Method 2: Environment variable
+    # Try env
     if not api_key:
         api_key = os.getenv("GEMINI_API_KEY")
     
-    # Debug: Show what we got (REMOVE after testing)
-    if api_key:
-        st.info(f"✅ API Key found: {api_key[:10]}...{api_key[-4:]}")
-    else:
-        st.error("❌ No API key found in secrets or environment")
-    
     if not api_key:
-        st.error("❌ Missing GEMINI_API_KEY!")
-        st.info("Get your key at: https://aistudio.google.com/app/apikey")
+        st.error("❌ No API key found")
         return None
+    
+    # Return without testing
+    return {
+        'api_key': api_key,
+        'model': 'models/gemini-1.5-flash-latest'
+    }
+
+def call_gemini_api(config: Dict, prompt: str) -> str:
+    """Call Gemini API with better error handling"""
+    if not config:
+        return "Error: No API config"
+    
+    # Use v1beta endpoint (more stable)
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={config['api_key']}"
+    
+    payload = {
+        "contents": [{
+            "parts": [{"text": prompt}]
+        }],
+        "generationConfig": {
+            "temperature": 0.3,
+            "maxOutputTokens": 2048,
+        }
+    }
     
     try:
-        url = f"{Config.GEMINI_API_BASE}/models?key={api_key}"
-        response = requests.get(url, timeout=10)
+        response = requests.post(
+            url, 
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=30
+        )
+        
+        # Debug: Show response status
+        if Config.DEBUG:
+            st.write(f"API Response Status: {response.status_code}")
         
         if response.status_code == 200:
-            models_data = response.json()
-            available = [m['name'] for m in models_data.get('models', [])]
+            data = response.json()
             
-            selected = None
-            for model in Config.GEMINI_MODELS:
-                if model in available:
-                    selected = model
-                    break
+            if 'candidates' in data and len(data['candidates']) > 0:
+                candidate = data['candidates'][0]
+                if 'content' in candidate:
+                    parts = candidate['content'].get('parts', [])
+                    if len(parts) > 0 and 'text' in parts[0]:
+                        return parts[0]['text']
             
-            if selected:
-                return {'api_key': api_key, 'model': selected}
+            return "Sorry, no valid response received."
         
         elif response.status_code == 400:
-            st.error("❌ Invalid API key!")
+            error_data = response.json()
+            error_msg = error_data.get('error', {}).get('message', 'Unknown error')
+            
+            if "API key not valid" in error_msg:
+                return "❌ Invalid API key. Please check your key at https://aistudio.google.com/app/apikey"
+            
+            return f"API Error: {error_msg}"
+        
+        elif response.status_code == 429:
+            return "⚠️ Rate limit exceeded. Please wait a moment and try again."
+        
         else:
-            st.error(f"❌ API error: {response.status_code}")
+            return f"API Error: Status {response.status_code}"
         
-        return None
-        
+    except requests.exceptions.Timeout:
+        return "⏱️ Request timeout. Please try again."
+    
+    except requests.exceptions.ConnectionError:
+        return "🔌 Connection error. Check your internet connection."
+    
     except Exception as e:
-        st.error(f"❌ Cannot connect to Gemini: {e}")
-        return None
+        return f"Error: {str(e)}"
 
 def call_gemini_api(config: Dict, prompt: str) -> str:
     """Call Gemini API"""
