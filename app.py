@@ -284,10 +284,24 @@ def initialize_vectorstore() -> Tuple[Optional[object], Dict]:
 @st.cache_resource
 def get_gemini_config() -> Optional[Dict]:
     """Get Gemini config"""
+    # Try multiple ways to get API key
+    api_key = None
+    
+    # Method 1: Streamlit secrets (recommended for Cloud)
     try:
-        api_key = st.secrets.get("GEMINI_API_KEY", None)
+        api_key = st.secrets["GEMINI_API_KEY"]
     except:
+        pass
+    
+    # Method 2: Environment variable
+    if not api_key:
         api_key = os.getenv("GEMINI_API_KEY")
+    
+    # Debug: Show what we got (REMOVE after testing)
+    if api_key:
+        st.info(f"✅ API Key found: {api_key[:10]}...{api_key[-4:]}")
+    else:
+        st.error("❌ No API key found in secrets or environment")
     
     if not api_key:
         st.error("❌ Missing GEMINI_API_KEY!")
