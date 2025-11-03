@@ -1,24 +1,10 @@
-python-dotenv==1.0.1
-streamlit==1.45.1
-
-# LangChain
-langchain>=0.2.0
-langchain-community==0.3.0
-langchain-huggingface==0.1.0
-langchain-google-genai==2.1.4
-langchain-text-splitters>=0.2.0
-
-# Vector Store (will skip if fails)
-faiss-cpu==1.8.0
-sentence-transformers==2.7.0
-
-# Document Processing
-pypdf==4.2.0
-docx2txt==0.8
-
-# Analytics
-pandas>=2.0.0
-plotly>=5.17.0
-
-# HTTP
-requests>=2.31.0
+streamlit>=1.28.0
+langchain>=0.1.0
+langchain-community>=0.0.20
+langchain-huggingface
+faiss-cpu
+sentence-transformers
+pypdf
+docx2txt
+python-dotenv
+requests
