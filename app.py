@@ -3,200 +3,227 @@ from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader, Te
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain_huggingface import HuggingFaceEmbeddings
+from langchain.memory import ConversationBufferWindowMemory
 import requests
 import json
-import os
-import pickle
-import json
-from datetime import datetime
-import requests
+from datetime import datetime, timedelta
 import tempfile
 import glob
+import os
+import pickle
 from pathlib import Path
 from dotenv import load_dotenv
-import base64
-import warnings, logging
+import warnings
+import logging
+from typing import Optional, Dict, List, Tuple, Any
+import hashlib
+import time
+from collections import defaultdict
+from dataclasses import dataclass, asdict
+import pandas as pd
+import plotly.express as px
+
 warnings.filterwarnings("ignore")
 logging.getLogger().setLevel(logging.ERROR)
-debug = False
-verbose = False
 
+# ============================================================================
+# STREAMLIT CLOUD OPTIMIZED CONFIG
+# ============================================================================
 
-def get_base64_of_image(path):
-    """Convert image to base64 string"""
-    try:
-        with open(path, "rb") as img_file:
-            return base64.b64encode(img_file.read()).decode()
-    except Exception as e:
-        return ""
-
-# Cấu hình trang
-st.set_page_config(
-    page_title="Chatbot Tư Vấn - Đại học Luật TPHCM",
-    page_icon="⚖️",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-# CSS tối ưu
-st.markdown("""
-<style>
-
-.header-container {
-    background: linear-gradient(90deg, #003366, #004c99);
-    color: white;
-    padding: 24px 0;
-    border-radius: 16px;
-    text-align: center;
-    box-shadow: 0 4px 15px rgba(0,0,0,0.25);
-    margin-bottom: 20px;
-}
-.header-container h1 {
-    font-size: 2rem;
-    margin-bottom: 0.4rem;
-    font-weight: 700;
-}
-.header-container h3 {
-    font-size: 1.2rem;
-    font-weight: 400;
-    margin-top: 0;
-    opacity: 0.9;
-}
-.header-container p {
-    font-size: 1rem;
-    margin-top: 0.2rem;
-    opacity: 0.85;
-}
-
-[data-testid="stToolbarActionButtonIcon"],[data-testid="stToolbarActionButtonLabel"] {
-    display: none !important;
-}
-[data-testid="stToolbar"] button:has([data-testid="stToolbarActionButtonIcon"]),
-[data-testid="stToolbar"] button:has([data-testid="stToolbarActionButtonLabel"])
-{
-    pointer-events: none !important;
-}
-}
-[data-testid="stToolbarActionButtonLabel"] {
-        display: none !important;
+class Config:
+    """Optimized configuration for Streamlit Cloud"""
+    DEBUG = False
+    VERSION = "4.0-cloud"
+    
+    # Paths
+    DOCUMENTS_PATH = "documents"
+    
+    # API
+    GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1"
+    GEMINI_MODELS = ['models/gemini-1.5-flash-latest', 'models/gemini-1.5-flash']
+    
+    # Rate limiting
+    MAX_REQUESTS_PER_MINUTE = 15  # Reduced for free tier
+    REQUEST_TIMEOUT = 30
+    
+    # Retrieval (optimized for memory)
+    CHUNK_SIZE = 800  # Reduced from 1000
+    CHUNK_OVERLAP = 150  # Reduced from 200
+    MIN_CHUNK_LENGTH = 50
+    TOP_K_RESULTS = 3  # Reduced from 5
+    
+    # Memory
+    MEMORY_WINDOW = 3  # Reduced from 5
+    
+    # Cache
+    CACHE_TTL_SECONDS = 3600
+    SIMILARITY_THRESHOLD = 0.95
+    
+    # Confidence
+    HIGH_CONFIDENCE = 0.8
+    MEDIUM_CONFIDENCE = 0.5
+    
+    # Languages
+    SUPPORTED_LANGUAGES = ['vi', 'en']
+    DEFAULT_LANGUAGE = 'vi'
+    
+    # Contact
+    CONTACT_INFO = {
+        'hotline': ['1900 5555 14', '0879 5555 14'],
+        'email': 'tuyensinh@hcmulaw.edu.vn',
+        'phone': '(028) 39400 989',
+        'address': '2 Nguyễn Tất Thành, Phường 12, Quận 4, TP.HCM',
+        'website': 'www.hcmulaw.edu.vn',
+        'facebook': 'facebook.com/hcmulaw'
     }
-</style>
 
-<div class="header-container">
-    <h1>🤖 Chatbot Tư Vấn Tuyển Sinh</h1>
-    <h3>Trường Đại học Luật TP. Hồ Chí Minh</h3>
-    <p>💬 Hỗ trợ 24/7 &nbsp; | &nbsp; 🎓 Tư vấn chuyên nghiệp</p>
-</div>
-""", unsafe_allow_html=True)
+# ============================================================================
+# DATA STRUCTURES
+# ============================================================================
 
+@dataclass
+class ConversationTurn:
+    role: str
+    content: str
+    timestamp: str
+    category: str = ""
+    confidence: float = 0.0
+    sources: List[str] = None
+    feedback: Optional[int] = None
 
-# Load biến môi trường
-load_dotenv()
+# ============================================================================
+# UTILITIES
+# ============================================================================
 
-# ĐỌC API KEY TỪ SECRETS TRƯỚC, SAU ĐÓ MỚI ĐẾN .env
-try:
-    gemini_api_key = st.secrets["GEMINI_API_KEY"]
-except:
-    gemini_api_key = os.getenv("GEMINI_API_KEY")
+def init_session_state():
+    """Initialize session state"""
+    defaults = {
+        "messages": [],
+        "conversation_memory": ConversationBufferWindowMemory(
+            k=Config.MEMORY_WINDOW,
+            return_messages=True
+        ),
+        "first_visit": True,
+        "request_count": 0,
+        "last_request_time": datetime.now(),
+        "error_count": 0,
+        "pending_question": None,
+        "language": Config.DEFAULT_LANGUAGE,
+        "query_cache": {},
+        "analytics": defaultdict(int),
+        "feedback_data": [],
+        "conversation_id": f"conv_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+        "show_analytics": False,
+    }
+    
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
 
-try:
-    GDRIVE_VECTORSTORE_ID = st.secrets["GDRIVE_VECTORSTORE_ID"]
-except:
-    GDRIVE_VECTORSTORE_ID = os.getenv("GDRIVE_VECTORSTORE_ID")
+def sanitize_input(text: str, max_length: int = 500) -> str:
+    """Sanitize user input"""
+    if not text:
+        return ""
+    text = " ".join(text.split())
+    text = text[:max_length]
+    dangerous = ['<script', 'javascript:', 'onerror=']
+    for pattern in dangerous:
+        text = text.replace(pattern, '')
+    return text.strip()
 
-try:
-    GDRIVE_METADATA_ID = st.secrets["GDRIVE_METADATA_ID"]
-except:
-    GDRIVE_METADATA_ID = os.getenv("GDRIVE_METADATA_ID")
+def check_rate_limit() -> Tuple[bool, str]:
+    """Rate limiting"""
+    now = datetime.now()
+    time_diff = (now - st.session_state.last_request_time).total_seconds()
+    
+    if time_diff < 60:
+        if st.session_state.request_count >= Config.MAX_REQUESTS_PER_MINUTE:
+            wait_time = int(60 - time_diff)
+            return False, f"⏳ Vui lòng đợi {wait_time} giây"
+    else:
+        st.session_state.request_count = 0
+        st.session_state.last_request_time = now
+    
+    st.session_state.request_count += 1
+    return True, ""
 
-# Cấu hình đường dẫn
-DOCUMENTS_PATH = "documents"
-VECTORSTORE_PATH = "vectorstore"
-
-for path in [DOCUMENTS_PATH, VECTORSTORE_PATH]:
-    Path(path).mkdir(exist_ok=True)
-
-# Template prompt
-COUNSELING_PROMPT_TEMPLATE = """
-Bạn là chuyên gia tư vấn tuyển sinh Trường Đại học Luật Thành phố Hồ Chí Minh.
-
-THÔNG TIN LIÊN HỆ CHÍNH THỨC:
-- Hotline tuyển sinh: 1900 5555 14 hoặc 0879 5555 14
-- Email: tuyensinh@hcmulaw.edu.vn
-- Điện thoại: (028) 39400 989
-- Địa chỉ: 2 Nguyễn Tất Thành, Phường 12, Quận 4, TP.HCM
-- Website: www.hcmulaw.edu.vn
-
-Nguyên tắc trả lời:
-1. Thân thiện, chuyên nghiệp
-2. Cung cấp thông tin chính xác về Đại học Luật TPHCM
-3. KHÔNG sử dụng placeholder, luôn dùng thông tin liên hệ cụ thể ở trên
-4. Nếu không chắc chắn, khuyến khích liên hệ trực tiếp
-
-Thông tin tham khảo: {context}
-Lịch sử hội thoại: {chat_history}
-Câu hỏi: {question}
-
-Trả lời (tiếng Việt):
+def format_contact_info(language: str = 'vi') -> str:
+    """Format contact info"""
+    info = Config.CONTACT_INFO
+    if language == 'vi':
+        return f"""
+📞 **Hotline:** {' hoặc '.join(info['hotline'])}
+📧 **Email:** {info['email']}
+☎️ **Điện thoại:** {info['phone']}
+🌐 **Website:** {info['website']}
+📍 **Địa chỉ:** {info['address']}
+"""
+    else:
+        return f"""
+📞 **Hotline:** {' or '.join(info['hotline'])}
+📧 **Email:** {info['email']}
+☎️ **Phone:** {info['phone']}
+🌐 **Website:** {info['website']}
+📍 **Address:** {info['address']}
 """
 
-@st.cache_resource
+# ============================================================================
+# EMBEDDINGS & VECTORSTORE (OPTIMIZED)
+# ============================================================================
+
+@st.cache_resource(show_spinner="🔄 Loading AI model... (first time: 2-3 min)")
 def load_embeddings():
-    return HuggingFaceEmbeddings(
-        model_name="keepitreal/vietnamese-sbert",
-        model_kwargs={'device': 'cpu'},
-        encode_kwargs={'normalize_embeddings': True}
-    )
-
-embeddings = load_embeddings()
-
-def download_from_gdrive_direct(file_id, output_path):
-    """
-    Download file từ Google Drive bằng requests (không dùng gdown)
-    File phải được share công khai: Anyone with the link
-    """
+    """Load embeddings - optimized for Streamlit Cloud"""
     try:
-        # URL download trực tiếp từ GDrive
-        url = f"https://drive.google.com/uc?export=download&id={file_id}"
+        import sys, io
+        old_stdout = sys.stdout
+        sys.stdout = io.StringIO()  # Suppress output
         
-        session = requests.Session()
-        response = session.get(url, stream=True)
+        embeddings = HuggingFaceEmbeddings(
+            model_name="keepitreal/vietnamese-sbert",
+            model_kwargs={'device': 'cpu'},
+            encode_kwargs={'normalize_embeddings': True},
+            cache_folder="/tmp/sentence_transformers"
+        )
         
-        # Xử lý virus scan warning của GDrive (file lớn)
-        for key, value in response.cookies.items():
-            if key.startswith('download_warning'):
-                params = {'export': 'download', 'id': file_id, 'confirm': value}
-                response = session.get(url, params=params, stream=True)
-                break
-        
-        # Lưu file
-        with open(output_path, 'wb') as f:
-            for chunk in response.iter_content(chunk_size=32768):
-                if chunk:
-                    f.write(chunk)
-        
-        return True
+        sys.stdout = old_stdout
+        return embeddings
         
     except Exception as e:
-        #st.warning(f"⚠️ Không thể tải từ GDrive: {e}")
+        sys.stdout = old_stdout
+        st.warning(f"⚠️ Could not load embeddings: {str(e)[:100]}")
+        st.info("💡 Running in API-only mode (no RAG)")
+        return None
+
+def download_from_gdrive(file_id: str, output_path: str) -> bool:
+    """Download from Google Drive"""
+    if not file_id:
+        return False
+    
+    try:
+        url = f"https://drive.google.com/uc?export=download&id={file_id}"
+        response = requests.get(url, stream=True, timeout=30)
+        
+        if response.status_code == 200:
+            with open(output_path, 'wb') as f:
+                for chunk in response.iter_content(32768):
+                    if chunk:
+                        f.write(chunk)
+            return True
+        return False
+    except:
         return False
 
-def get_document_files():
-    """Lấy danh sách file trong documents"""
-    files = []
-    for ext in ['*.pdf', '*.docx', '*.txt']:
-        files.extend(glob.glob(os.path.join(DOCUMENTS_PATH, '**', ext), recursive=True))
-    return files
-
-def get_file_hash(file_path):
-    """Tạo hash cho file"""
-    stat = os.stat(file_path)
-    return f"{stat.st_mtime}_{stat.st_size}"
-
-def load_cached_vectorstore():
-    """Load vector store từ Google Drive"""
-    if not GDRIVE_VECTORSTORE_ID or not GDRIVE_METADATA_ID:
-        #st.info("ℹ️ Chưa cấu hình Google Drive, sử dụng xử lý local")
+def load_cached_vectorstore() -> Tuple[Optional[object], Dict]:
+    """Load from Google Drive"""
+    try:
+        vectorstore_id = st.secrets.get("GDRIVE_VECTORSTORE_ID", None)
+        metadata_id = st.secrets.get("GDRIVE_METADATA_ID", None)
+    except:
+        vectorstore_id = os.getenv("GDRIVE_VECTORSTORE_ID")
+        metadata_id = os.getenv("GDRIVE_METADATA_ID")
+    
+    if not vectorstore_id or not metadata_id:
         return None, {}
     
     temp_dir = tempfile.mkdtemp()
@@ -204,30 +231,22 @@ def load_cached_vectorstore():
     metadata_path = os.path.join(temp_dir, "metadata.json")
     
     try:
-        # Download bằng requests thay vì gdown
-        if not download_from_gdrive_direct(GDRIVE_VECTORSTORE_ID, vectorstore_path):
+        if not download_from_gdrive(vectorstore_id, vectorstore_path):
             return None, {}
-        if not download_from_gdrive_direct(GDRIVE_METADATA_ID, metadata_path):
+        if not download_from_gdrive(metadata_id, metadata_path):
             return None, {}
         
         with open(vectorstore_path, 'rb') as f:
             vectorstore = pickle.load(f)
         
-        with open(metadata_path, 'r', encoding='utf-8') as f:
+        with open(metadata_path, 'r') as f:
             metadata = json.load(f)
         
-        # Cleanup
-        os.remove(vectorstore_path)
-        os.remove(metadata_path)
-        os.rmdir(temp_dir)
-        
-        #st.success("✅ Đã load vectorstore từ Google Drive")
         return vectorstore, metadata
         
     except Exception as e:
-        if debug:
-            st.warning(f"⚠️ Không thể load từ GDrive: {e}")
-        # Cleanup nếu có lỗi
+        return None, {}
+    finally:
         try:
             if os.path.exists(vectorstore_path):
                 os.remove(vectorstore_path)
@@ -237,602 +256,753 @@ def load_cached_vectorstore():
                 os.rmdir(temp_dir)
         except:
             pass
-        return None, {}
 
-def process_documents(file_paths):
-    """Xử lý documents"""
-    documents = []
-    processed = []
-    failed = []
+@st.cache_resource(show_spinner=False)
+def initialize_vectorstore() -> Tuple[Optional[object], Dict]:
+    """Initialize vectorstore - with proper status messages"""
     
-    for file_path in file_paths:
+    # Try Google Drive first
+    with st.status("🔄 Loading vectorstore from Google Drive...") as status:
         try:
-            ext = Path(file_path).suffix.lower()
-            
-            if ext == ".pdf":
-                loader = PyPDFLoader(file_path)
-            elif ext == ".docx":
-                loader = Docx2txtLoader(file_path)
-            elif ext == ".txt":
-                loader = TextLoader(file_path, encoding='utf-8')
-            else:
-                failed.append(f"{file_path} (không hỗ trợ)")
-                continue
-            
-            docs = loader.load()
-            for doc in docs:
-                doc.metadata['source_file'] = os.path.basename(file_path)
-                doc.metadata['processed_time'] = datetime.now().isoformat()
-            
-            documents.extend(docs)
-            processed.append(file_path)
-            
+            vectorstore, metadata = load_cached_vectorstore()
+            if vectorstore:
+                status.update(label="✅ Vectorstore loaded from Google Drive", state="complete")
+                return vectorstore, metadata.get('stats', {})
         except Exception as e:
-            failed.append(f"{file_path} ({str(e)})")
+            status.update(label=f"⚠️ Google Drive failed: {str(e)[:50]}", state="error")
     
-    return documents, processed, failed
-
-def create_vector_store(documents):
-    """Tạo vector store"""
-    if not documents:
-        return None
-    
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=200,
-        separators=['\n\n', '\n', '.', '!', '?', ';', ':', ' ']
-    )
-    texts = text_splitter.split_documents(documents)
-    texts = [t for t in texts if len(t.page_content.strip()) > 50]
-    
-    if not texts:
-        return None
-    
-    return FAISS.from_documents(texts, embeddings)
-
-@st.cache_resource
-def initialize_vectorstore():
-    """Khởi tạo vectorstore"""
-    # Thử load từ GDrive trước
-    vectorstore, metadata = load_cached_vectorstore()
-    if vectorstore:
-        return vectorstore, metadata.get('stats', {})
-    
-    # Nếu không có GDrive, xử lý local files
-    if debug:
-        st.info("ℹ️ Đang xử lý tài liệu local...")
-    current_files = get_document_files()
-    
-    if not current_files:
-        st.warning("⚠️ Không tìm thấy file nào trong thư mục documents")
-        return None, {}
-    
-    with st.spinner("🔄 Đang xử lý tài liệu..."):
-        documents, processed, failed = process_documents(current_files)
-        
-        if not documents:
-            st.error("❌ Không thể xử lý file nào")
-            return None, {}
-        
-        vectorstore = create_vector_store(documents)
-        
-        if vectorstore:
-            stats = {
-                'total_files': len(current_files),
-                'processed_files': len(processed),
-                'failed_files': len(failed),
-                'total_chunks': vectorstore.index.ntotal,
-                'last_updated': datetime.now().isoformat()
-            }
-            if debug:
-                st.success(f"✅ Đã xử lý {len(processed)} files thành công!")
-            return vectorstore, stats
+    # Fallback: No vectorstore
+    st.warning("⚠️ No vectorstore found - Running in API-only mode")
+    st.info("💡 The chatbot will work but without document context")
     
     return None, {}
 
-def classify_question(question):
-    """Phân loại câu hỏi"""
-    question_lower = question.lower()
-    
-    categories = {
-        "Tuyển sinh": ["tuyển sinh", "đăng ký", "hồ sơ", "điểm chuẩn", "xét tuyển"],
-        "Học phí": ["học phí", "chi phí", "miễn giảm", "học bổng"],
-        "Chương trình đào tạo": ["chương trình", "môn học", "tín chỉ", "ngành"],
-    }
-    
-    for category, keywords in categories.items():
-        if any(kw in question_lower for kw in keywords):
-            return category
-    return "Khác"
-
-def get_category_badge(category):
-    """Tạo badge cho category"""
-    badge_map = {
-        "Tuyển sinh": "badge-tuyensinh",
-        "Học phí": "badge-hocphi",
-        "Chương trình đào tạo": "badge-chuongtrinh"
-    }
-    badge_class = badge_map.get(category, "badge-tuyensinh")
-    return f'<span class="category-badge {badge_class}">{category}</span>'
-
-def create_conversational_chain(vector_store, llm):
-    """
-    Tạo chain với Google Generative AI
-    Không dùng LangChain chain nữa - xử lý trực tiếp
-    """
-    # Trả về tuple: (vectorstore, llm) để xử lý manual
-    return (vector_store, llm)
+# ============================================================================
+# GEMINI API
+# ============================================================================
 
 @st.cache_resource
-def get_gemini_llm():
-    """
-    Tạo Gemini client dùng REST API trực tiếp
-    GIẢI PHÁP CUỐI CÙNG - LUÔN HOẠT ĐỘNG
-    """
-    if not gemini_api_key:
-        st.error("❌ Thiếu GEMINI_API_KEY!")
-        st.stop()
+def get_gemini_config() -> Optional[Dict]:
+    """Get Gemini config"""
+    try:
+        api_key = st.secrets.get("GEMINI_API_KEY", None)
+    except:
+        api_key = os.getenv("GEMINI_API_KEY")
     
-    # Test API key
-    test_url = f"https://generativelanguage.googleapis.com/v1/models?key={gemini_api_key}"
+    if not api_key:
+        st.error("❌ Missing GEMINI_API_KEY!")
+        st.info("Get your key at: https://aistudio.google.com/app/apikey")
+        return None
     
     try:
-        response = requests.get(test_url, timeout=10)
+        url = f"{Config.GEMINI_API_BASE}/models?key={api_key}"
+        response = requests.get(url, timeout=10)
         
         if response.status_code == 200:
             models_data = response.json()
-            available_models = [m['name'] for m in models_data.get('models', [])]
+            available = [m['name'] for m in models_data.get('models', [])]
             
-            # Tìm model tốt nhất có sẵn
-            preferred_models = [
-                'models/gemini-1.5-flash-latest',
-                'models/gemini-1.5-flash',
-                'models/gemini-1.5-pro-latest',
-                'models/gemini-1.5-pro',
-                'models/gemini-pro'
-            ]
-            
-            selected_model = None
-            for model in preferred_models:
-                if model in available_models:
-                    selected_model = model
+            selected = None
+            for model in Config.GEMINI_MODELS:
+                if model in available:
+                    selected = model
                     break
             
-            if not selected_model and available_models:
-                # Nếu không có model ưa thích, lấy model đầu tiên
-                selected_model = available_models[0]
-            
-            if selected_model:
-                #st.success(f"✅ Đã kết nối Gemini: {selected_model}")
-                return {
-                    'api_key': gemini_api_key,
-                    'model': selected_model,
-                    'available_models': available_models
-                }
-            else:
-                st.error("❌ Không tìm thấy model nào!")
-                st.stop()
-                
+            if selected:
+                return {'api_key': api_key, 'model': selected}
+        
         elif response.status_code == 400:
-            st.error("❌ API key không hợp lệ!")
-            st.info("Lấy API key mới tại: https://aistudio.google.com/app/apikey")
-            st.stop()
+            st.error("❌ Invalid API key!")
         else:
-            st.error(f"❌ Lỗi API: {response.status_code}")
-            st.stop()
-            
-    except requests.exceptions.Timeout:
-        st.error("❌ Timeout khi kết nối Gemini API")
-        st.stop()
+            st.error(f"❌ API error: {response.status_code}")
+        
+        return None
+        
     except Exception as e:
-        st.error(f"❌ Lỗi: {e}")
-        st.info("""
-        **Hướng dẫn:**
-        1. Lấy API key: https://aistudio.google.com/app/apikey
-        2. Thêm vào Streamlit Secrets:
-```
-        GEMINI_API_KEY = "AIzaSy..."
-```
-        """)
-        st.stop()
+        st.error(f"❌ Cannot connect to Gemini: {e}")
+        return None
 
-def call_gemini_api(llm_config, prompt):
-    """
-    Gọi Gemini API bằng REST API
-    """
-    api_key = llm_config['api_key']
-    model = llm_config['model']
+def call_gemini_api(config: Dict, prompt: str) -> str:
+    """Call Gemini API"""
+    if not config:
+        return "Error: No API config"
     
-    # API endpoint
-    url = f"https://generativelanguage.googleapis.com/v1/{model}:generateContent?key={api_key}"
+    url = f"{Config.GEMINI_API_BASE}/{config['model']}:generateContent?key={config['api_key']}"
     
-    # Request body
     payload = {
-        "contents": [{
-            "parts": [{"text": prompt}]
-        }],
+        "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {
             "temperature": 0.3,
             "topK": 40,
             "topP": 0.95,
-            "maxOutputTokens": 2000,
+            "maxOutputTokens": 2048,
         }
     }
     
-    headers = {"Content-Type": "application/json"}
-    
     try:
-        response = requests.post(url, json=payload, headers=headers, timeout=30)
+        response = requests.post(url, json=payload, timeout=Config.REQUEST_TIMEOUT)
         
         if response.status_code == 200:
             data = response.json()
-            
-            # Extract text từ response
             if 'candidates' in data and len(data['candidates']) > 0:
                 candidate = data['candidates'][0]
                 if 'content' in candidate and 'parts' in candidate['content']:
                     parts = candidate['content']['parts']
                     if len(parts) > 0 and 'text' in parts[0]:
                         return parts[0]['text']
-            
-            return "Xin lỗi, không nhận được phản hồi từ AI."
-            
+            return "Sorry, no valid response received."
+        
         else:
-            error_msg = response.json().get('error', {}).get('message', 'Unknown error')
-            return f"Lỗi API: {error_msg}"
-            
+            return "Sorry, the system is temporarily unavailable."
+        
     except requests.exceptions.Timeout:
-        return "Lỗi: Timeout khi gọi API"
+        return "Error: System is slow, please try again."
     except Exception as e:
-        return f"Lỗi: {str(e)}"
+        return f"Error: {str(e)}" if Config.DEBUG else "Sorry, an error occurred."
 
-def answer_from_external_api(prompt, llm_config, question_category):
-    """Trả lời từ Gemini REST API"""
-    enhanced_prompt = f"""
-Bạn là chuyên gia tư vấn {question_category.lower()} của Đại học Luật TPHCM.
+# ============================================================================
+# QUESTION HANDLING
+# ============================================================================
 
-THÔNG TIN LIÊN HỆ (BẮT BUỘC SỬ DỤNG):
-- Hotline: 1900 5555 14 hoặc 0879 5555 14
-- Email: tuyensinh@hcmulaw.edu.vn
-- Điện thoại: (028) 39400 989
-- Địa chỉ: 2 Nguyễn Tất Thành, Phường 12, Quận 4, TP.HCM
-- Website: www.hcmulaw.edu.vn
-
-Câu hỏi: {prompt}
-
-QUY TẮC:
-- KHÔNG dùng placeholder như [Số điện thoại], [Email]
-- Luôn dùng thông tin cụ thể ở trên
-- Kết thúc bằng thông tin liên hệ nếu cần
-
-Trả lời thân thiện, chuyên nghiệp bằng tiếng Việt:
-"""
+def classify_question(question: str, language: str = 'vi') -> str:
+    """Classify question"""
+    q_lower = question.lower()
     
-    try:
-        answer = call_gemini_api(llm_config, enhanced_prompt)
-        
-        # Thay thế placeholder còn sót
-        replacements = {
-            "[Số điện thoại": "1900 5555 14 hoặc 0879 5555 14",
-            "[Email": "tuyensinh@hcmulaw.edu.vn",
-            "[Website": "www.hcmulaw.edu.vn",
-            "[Điện thoại": "(028) 39400 989"
+    categories = {
+        "vi": {
+            "Tuyển sinh": ["tuyển sinh", "đăng ký", "hồ sơ", "điểm chuẩn", "xét tuyển"],
+            "Học phí": ["học phí", "chi phí", "miễn giảm", "học bổng", "tiền"],
+            "Chương trình đào tạo": ["chương trình", "môn học", "tín chỉ", "ngành", "khoa"],
+            "Cơ sở vật chất": ["ký túc xá", "ktx", "thư viện", "phòng lab", "cơ sở"],
+            "Việc làm": ["việc làm", "thực tập", "cơ hội", "nghề nghiệp"],
+        },
+        "en": {
+            "Admission": ["admission", "enroll", "register", "application"],
+            "Tuition": ["tuition", "fee", "cost", "scholarship"],
+            "Program": ["program", "course", "curriculum", "major"],
+            "Facilities": ["dormitory", "library", "lab", "facilities"],
+            "Career": ["career", "job", "internship", "employment"],
         }
-        
-        for placeholder, actual in replacements.items():
-            if placeholder in answer:
-                answer = answer.replace(placeholder + "]", actual)
-        
-        return answer
-        
-    except Exception as e:
-        return f"""
-Xin lỗi, hệ thống gặp sự cố. Vui lòng liên hệ:
-
-📞 **Hotline:** 1900 5555 14 hoặc 0879 5555 14
-📧 **Email:** tuyensinh@hcmulaw.edu.vn
-🌐 **Website:** www.hcmulaw.edu.vn
-📍 **Địa chỉ:** 2 Nguyễn Tất Thành, P.12, Q.4, TP.HCM
-
-_(Lỗi kỹ thuật: {str(e)[:100]})_
-"""
-
-def display_quick_questions():
-    """Hiển thị câu hỏi gợi ý"""
-    st.markdown("### 💡 Câu hỏi thường gặp")
+    }
     
-    questions = [
-        "📝 Thủ tục đăng ký xét tuyển?",
-        "💰 Học phí của trường?",
-        "📚 Các ngành học?",
-        "🏠 Trường có ký túc xá không?",
-        "🎓 Cơ hội việc làm?",
-        "📞 Thông tin liên hệ?"
-    ]
+    cats = categories.get(language, categories['vi'])
     
-    for i, q in enumerate(questions):
-        if st.button(q, key=f"q_{i}"):
-            st.session_state["pending_question"] = q
-            st.rerun()
-
-def main():
-    # Kiểm tra API key
-    if not gemini_api_key:
-        st.error("⚠️ **Thiếu GEMINI_API_KEY!**")
-        st.info("""
-        **Cách cấu hình:**
-        1. Vào Settings → Secrets trên Streamlit Cloud
-        2. Thêm:
-```
-        GEMINI_API_KEY = "your-api-key"
-```
-        3. Lấy API key tại: https://makersuite.google.com/app/apikey
-        """)
-        st.stop()
+    for category, keywords in cats.items():
+        if any(kw in q_lower for kw in keywords):
+            return category
     
-    # Khởi tạo session state
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
-    if "first_visit" not in st.session_state:
-        st.session_state.first_visit = True
+    return "Thông tin chung" if language == 'vi' else "General"
 
-    # Sidebar
-    with st.sidebar:
-        st.markdown("### ⚙️ Cài đặt")
+def get_conversation_context() -> str:
+    """Get conversation context"""
+    memory = st.session_state.conversation_memory
+    try:
+        history = memory.load_memory_variables({})
+        messages = history.get('history', [])
+        if not messages:
+            return ""
         
-        # Thông tin hệ thống
-        with st.expander("📊 Trạng thái hệ thống", expanded=False):
-            st.success("✅ Gemini API: Đã kết nối")
-            
-            # Đếm file REAL-TIME
-            current_files = get_document_files()
-            st.info(f"📁 Documents: {len(current_files)} files")
-            
-            # Hiển thị danh sách file
-            if current_files:
-                st.markdown("**Danh sách file:**")
-                for file in current_files:
-                    st.text(f"- {os.path.basename(file)}")
-            
-            # Hiển thị stats
-            if 'vectorstore_stats' in st.session_state:
-                stats = st.session_state.vectorstore_stats
-                st.info(f"📦 Chunks: {stats.get('total_chunks', 0)}")
-                st.caption(f"Cập nhật: {stats.get('last_updated', 'N/A')[:19]}")
-            
-            if GDRIVE_VECTORSTORE_ID:
-                st.info("☁️ Google Drive: Đã cấu hình")
-            else:
-                st.warning("⚠️ Google Drive: Chưa cấu hình")
-        
-        # Upload file mới
-        with st.expander("📤 Upload tài liệu mới", expanded=False):
-            uploaded_files = st.file_uploader(
-                "Chọn file PDF, DOCX, TXT",
-                type=['pdf', 'docx', 'txt'],
-                accept_multiple_files=True,
-                key="file_uploader"
-            )
-            
-            if uploaded_files:
-                if st.button("💾 Lưu và xử lý", use_container_width=True):
-                    with st.spinner("🔄 Đang lưu file..."):
-                        saved_count = 0
-                        for uploaded_file in uploaded_files:
-                            try:
-                                # Lưu vào thư mục documents
-                                file_path = os.path.join(DOCUMENTS_PATH, uploaded_file.name)
-                                with open(file_path, "wb") as f:
-                                    f.write(uploaded_file.getbuffer())
-                                saved_count += 1
-                            except Exception as e:
-                                st.error(f"Lỗi lưu {uploaded_file.name}: {e}")
-                        
-                        if saved_count > 0:
-                            st.success(f"✅ Đã lưu {saved_count} file!")
-                            
-                            # XÓA CACHE và REBUILD
-                            st.cache_resource.clear()
-                            if 'vectorstore_stats' in st.session_state:
-                                del st.session_state.vectorstore_stats
-                            
-                            st.info("🔄 Đang rebuild vectorstore...")
-                            st.rerun()
-        
-        # Nút Force Rebuild
-        st.markdown("---")
-        if st.button("⚡ Rebuild Vectorstore", use_container_width=True, type="primary"):
-            with st.spinner("🔄 Đang xử lý lại tất cả tài liệu..."):
-                # XÓA CACHE
-                st.cache_resource.clear()
-                if 'vectorstore_stats' in st.session_state:
-                    del st.session_state.vectorstore_stats
-                
-                # Force rebuild
-                current_files = get_document_files()
-                
-                if not current_files:
-                    st.error("❌ Không có file nào trong thư mục documents!")
-                else:
-                    documents, processed, failed = process_documents(current_files)
-                    
-                    if documents:
-                        vectorstore = create_vector_store(documents)
-                        
-                        if vectorstore:
-                            stats = {
-                                'total_files': len(current_files),
-                                'processed_files': len(processed),
-                                'failed_files': len(failed),
-                                'total_chunks': vectorstore.index.ntotal,
-                                'last_updated': datetime.now().isoformat()
-                            }
-                            st.session_state.vectorstore_stats = stats
-                            st.success(f"✅ Đã xử lý {len(processed)} files!")
-                            st.info(f"📦 Tạo được {stats['total_chunks']} chunks")
-                            
-                            if failed:
-                                st.warning(f"⚠️ Không xử lý được {len(failed)} files")
-                    else:
-                        st.error("❌ Không thể xử lý file nào")
-                
-                st.rerun()
-        
-        # Hướng dẫn cấu hình GDrive
-        with st.expander("📖 Hướng dẫn Google Drive", expanded=False):
-            st.markdown("""
-            **Để sử dụng Google Drive:**
-            
-            1. Upload file `vectorstore.pkl` và `metadata.json` lên GDrive
-            2. Click chuột phải → Share → Anyone with the link
-            3. Copy File ID từ URL (phần sau `/d/` và trước `/view`)
-            4. Thêm vào Secrets:
-        GDRIVE_VECTORSTORE_ID = "file-id-1"
-        GDRIVE_METADATA_ID = "file-id-2"
-            """)
-        
-        # Nút làm mới
-        if st.button("🔄 Làm mới dữ liệu", use_container_width=True):
-            st.cache_resource.clear()
-            st.session_state.clear()
-            st.rerun()
-        
-        st.markdown("---")
-        st.markdown("""
-        ### 📞 Liên hệ
-        **Hotline:** 1900 5555 14  
-        **Email:** tuyensinh@hcmulaw.edu.vn  
-        **Web:** www.hcmulaw.edu.vn
-        """)
+        context_parts = []
+        for msg in messages[-Config.MEMORY_WINDOW:]:
+            role = "User" if msg.type == "human" else "Assistant"
+            context_parts.append(f"{role}: {msg.content[:150]}")
+        return "\n".join(context_parts)
+    except:
+        return ""
 
-    # Khởi tạo vectorstore và LLM
-    with st.spinner("🔄 Đang khởi động hệ thống..."):
-        vectorstore, stats = initialize_vectorstore()
-        
-        # LƯU STATS VÀO SESSION STATE
-        if stats:
-            st.session_state.vectorstore_stats = stats
-        
-        llm = get_gemini_llm()
-        
-        # Không dùng chain nữa, xử lý trực tiếp
-        if vectorstore:
-            retriever = vectorstore.as_retriever(search_kwargs={"k": 3})
-        else:
-            retriever = None
-
-    # Hiển thị câu hỏi gợi ý nếu là lần đầu
-    if not st.session_state.messages and st.session_state.first_visit:
-        display_quick_questions()
-        
-        st.markdown("""
-        <div class="info-card">
-            <h4>💡 Hướng dẫn sử dụng:</h4>
-            <ul>
-                <li>🎯 Chọn câu
-                <li>🎯 Chọn câu hỏi gợi ý hoặc nhập câu hỏi của bạn</li>
-                <li>💬 Đặt câu hỏi cụ thể để được tư vấn chính xác</li>
-                <li>📞 Liên hệ trực tiếp nếu cần hỗ trợ khẩn cấp</li>
-            </ul>
-        </div>
-        """, unsafe_allow_html=True)
-
-    # Hiển thị lịch sử chat
-    for msg in st.session_state.messages:
-        with st.chat_message(msg["role"]):
-            if msg["role"] == "assistant" and "category" in msg:
-                st.markdown(get_category_badge(msg["category"]), unsafe_allow_html=True)
-            st.markdown(msg["content"])
-
-    # Xử lý input
-    prompt = None
-    if hasattr(st.session_state, 'process_question'):
-        prompt = st.session_state.process_question
-        del st.session_state.process_question
-    else:
-        prompt = st.chat_input("💬 Hãy đặt câu hỏi...")
-    if "pending_question" in st.session_state and st.session_state.pending_question:
-        prompt = st.session_state.pending_question
-        st.session_state.pending_question = None
+def create_prompt(question: str, context: str, category: str, language: str = 'vi') -> str:
+    """Create prompt"""
+    conv_context = get_conversation_context()
+    conv_section = f"\nRECENT CONVERSATION:\n{conv_context}\n" if conv_context else ""
     
-    if prompt:
-        st.session_state.first_visit = False
-        
-        # Hiển thị câu hỏi
-        with st.chat_message("user"):
-            st.markdown(prompt)
-        st.session_state.messages.append({"role": "user", "content": prompt})
-
-        # Phân loại và trả lời
-        category = classify_question(prompt)
-        
-        with st.chat_message("assistant"):
-            st.markdown(get_category_badge(category), unsafe_allow_html=True)
-            
-            with st.spinner("🤔 Đang suy nghĩ..."):
-                try:
-                    # XỬ LÝ TRỰC TIẾP không dùng chain
-                    if retriever:
-                        # Lấy context từ vectorstore
-                        docs = retriever.invoke(prompt)
-                        context = "\n\n".join([doc.page_content for doc in docs[:3]])
-                        
-                        # Tạo prompt với context
-                        full_prompt = f"""
-Bạn là chuyên gia tư vấn của Đại học Luật TPHCM.
-
+    if language == 'vi':
+        return f"""Bạn là chuyên gia tư vấn {category.lower()} của Trường Đại học Luật TP. Hồ Chí Minh.
+{conv_section}
 THÔNG TIN THAM KHẢO:
 {context}
 
 THÔNG TIN LIÊN HỆ:
-- Hotline: 1900 5555 14 hoặc 0879 5555 14
-- Email: tuyensinh@hcmulaw.edu.vn
-- Website: www.hcmulaw.edu.vn
+{format_contact_info('vi')}
 
-Câu hỏi: {prompt}
+CÂU HỎI: {question}
 
-Hãy trả lời dựa trên thông tin tham khảo ở trên. Nếu không có thông tin, hãy tư vấn chung và khuyến khích liên hệ trực tiếp.
+HƯỚNG DẪN:
+1. Trả lời ngắn gọn, dễ hiểu (tối đa 150 từ)
+2. Ưu tiên thông tin từ tài liệu tham khảo
+3. Sử dụng thông tin liên hệ chính xác
+4. Nếu không chắc, khuyến khích liên hệ trực tiếp
+5. Sử dụng emoji để dễ đọc
+
+Trả lời bằng tiếng Việt, thân thiện và chuyên nghiệp:"""
+    else:
+        return f"""You are an admissions consultant for HCMC University of Law.
+{conv_section}
+REFERENCE INFO:
+{context}
+
+CONTACT:
+{format_contact_info('en')}
+
+QUESTION: {question}
+
+GUIDELINES:
+1. Keep response concise (max 150 words)
+2. Prioritize reference information
+3. Use accurate contact details
+4. Encourage direct contact if uncertain
+5. Use emojis for readability
+
+Respond in English, friendly and professional:"""
+
+def calculate_confidence(has_context: bool, answer_length: int) -> float:
+    """Simple confidence calculation"""
+    if not has_context:
+        return Config.MEDIUM_CONFIDENCE
+    
+    # Based on answer length (sweet spot: 50-200 words)
+    words = answer_length / 5  # rough estimate
+    length_score = min(words / 100, 1.0)
+    
+    return min(0.7 + length_score * 0.3, 1.0)
+
+def generate_answer(question: str, vectorstore: Optional[object], 
+                   gemini_config: Dict) -> Tuple[str, str, float, List[str]]:
+    """Generate answer"""
+    
+    language = st.session_state.language
+    category = classify_question(question, language)
+    sources = []
+    
+    try:
+        if vectorstore:
+            # RAG mode
+            retriever = vectorstore.as_retriever(search_kwargs={"k": Config.TOP_K_RESULTS})
+            docs = retriever.invoke(question)
+            context = "\n\n".join([f"[Source: {doc.metadata.get('source_file', 'Unknown')}]\n{doc.page_content}" 
+                                   for doc in docs[:Config.TOP_K_RESULTS]])
+            sources = [doc.metadata.get('source_file', 'Unknown') for doc in docs[:Config.TOP_K_RESULTS]]
+            prompt = create_prompt(question, context, category, language)
+            has_context = True
+        else:
+            # API-only mode
+            prompt = f"""Bạn là chuyên gia tư vấn của Trường Đại học Luật TP. Hồ Chí Minh.
+
+THÔNG TIN LIÊN HỆ:
+{format_contact_info(language)}
+
+CÂU HỎI: {question}
+
+Trả lời chung và khuyến khích liên hệ để được tư vấn cụ thể.
+Trả lời bằng {'tiếng Việt' if language == 'vi' else 'English'}, ngắn gọn:"""
+            has_context = False
+        
+        # Generate
+        answer = call_gemini_api(gemini_config, prompt)
+        
+        # Calculate confidence
+        confidence = calculate_confidence(has_context, len(answer))
+        
+        # Update memory
+        st.session_state.conversation_memory.save_context(
+            {"input": question},
+            {"output": answer}
+        )
+        
+        # Update analytics
+        st.session_state.analytics[category] += 1
+        st.session_state.analytics['total_queries'] += 1
+        
+        return answer, category, confidence, sources
+        
+    except Exception as e:
+        error_msg = f"""
+❌ **Xin lỗi, đã có lỗi xảy ra**
+
+Vui lòng liên hệ trực tiếp:
+
+{format_contact_info(language)}
 """
-                        answer = call_gemini_api(llm, full_prompt)
+        if Config.DEBUG:
+            error_msg += f"\n\n_Debug: {str(e)[:100]}_"
+        
+        return error_msg, "Lỗi hệ thống", 0.0, []
 
-                    else:
-                        # Không có vectorstore, dùng API thuần
-                        answer = answer_from_external_api(prompt, llm, category)
-                    
-                    st.markdown(answer)
-                    
-                except Exception as e:
-                    answer = f"""
-❌ **Lỗi hệ thống**
+# ============================================================================
+# UI COMPONENTS
+# ============================================================================
 
-Vui lòng liên hệ:
-📞 Hotline: 1900 5555 14 hoặc 0879 5555 14
-📧 Email: tuyensinh@hcmulaw.edu.vn
-
-_(Lỗi: {str(e)[:100]})_
-"""
-                    st.error(answer)
-
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": answer,
-                "category": category
-            })
-            st.rerun()
-
-    # Footer
-    st.markdown("---")
+def render_header():
+    """Render header"""
     st.markdown("""
-    <div class="footer">
+    <style>
+    .header-container {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        padding: 2rem;
+        border-radius: 16px;
+        text-align: center;
+        margin-bottom: 2rem;
+    }
+    .header-container h1 {
+        font-size: 2rem;
+        margin: 0;
+        font-weight: 700;
+    }
+    .header-container p {
+        margin: 0.5rem 0 0 0;
+        opacity: 0.9;
+    }
+    </style>
+    
+    <div class="header-container">
+        <h1>🤖 AI Chatbot Tư Vấn v4.0</h1>
+        <p>Trường Đại học Luật TP. Hồ Chí Minh</p>
+        <p>💬 Hỗ trợ 24/7 | 🎓 AI-Powered | ⚡ Smart Response</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+def get_confidence_badge(confidence: float) -> str:
+    """Confidence badge"""
+    if confidence >= Config.HIGH_CONFIDENCE:
+        return '<span style="background:#4caf50;color:white;padding:4px 10px;border-radius:10px;font-size:0.75em;">✅ High ({:.0%})</span>'.format(confidence)
+    elif confidence >= Config.MEDIUM_CONFIDENCE:
+        return '<span style="background:#ff9800;color:white;padding:4px 10px;border-radius:10px;font-size:0.75em;">⚠️ Medium ({:.0%})</span>'.format(confidence)
+    else:
+        return '<span style="background:#f44336;color:white;padding:4px 10px;border-radius:10px;font-size:0.75em;">❌ Low ({:.0%})</span>'.format(confidence)
+
+def get_category_badge(category: str) -> str:
+    """Category badge"""
+    colors = {
+        "Tuyển sinh": "#1e88e5", "Admission": "#1e88e5",
+        "Học phí": "#43a047", "Tuition": "#43a047",
+        "Chương trình đào tạo": "#fb8c00", "Program": "#fb8c00",
+        "Cơ sở vật chất": "#8e24aa", "Facilities": "#8e24aa",
+        "Việc làm": "#e53935", "Career": "#e53935",
+        "Thông tin chung": "#546e7a", "General": "#546e7a",
+    }
+    color = colors.get(category, "#546e7a")
+    return f'<span style="background:{color};color:white;padding:4px 12px;border-radius:12px;font-size:0.85em;font-weight:600;margin-bottom:8px;display:inline-block;">{category}</span>'
+
+def render_sources(sources: List[str]):
+    """Render sources"""
+    if sources and sources != ["Cache"]:
+        st.markdown("**📚 Nguồn tham khảo:**")
+        for i, source in enumerate(sources, 1):
+            st.caption(f"{i}. {source}")
+
+def render_feedback_buttons(message_index: int):
+    """Render feedback buttons"""
+    col1, col2, col3 = st.columns([1, 1, 8])
+    
+    with col1:
+        if st.button("👍", key=f"like_{message_index}"):
+            record_feedback(message_index, 1)
+    
+    with col2:
+        if st.button("👎", key=f"dislike_{message_index}"):
+            record_feedback(message_index, -1)
+
+def record_feedback(message_index: int, feedback: int):
+    """Record feedback"""
+    if message_index < len(st.session_state.messages):
+        msg = st.session_state.messages[message_index]
+        msg['feedback'] = feedback
+        
+        feedback_key = 'positive_feedback' if feedback > 0 else 'negative_feedback'
+        st.session_state.analytics[feedback_key] += 1
+        
+        st.success("✅ Cảm ơn phản hồi!" if feedback > 0 else "📝 Chúng tôi sẽ cải thiện!")
+        time.sleep(1)
+        st.rerun()
+
+def render_quick_questions():
+    """Render quick questions"""
+    language = st.session_state.language
+    
+    if language == 'vi':
+        st.markdown("### 💡 Câu hỏi thường gặp")
+        questions = [
+            "📝 Thủ tục đăng ký xét tuyển như thế nào?",
+            "💰 Học phí một năm là bao nhiêu?",
+            "📚 Trường có những ngành học nào?",
+            "🏠 Trường có ký túc xá không?",
+            "🎓 Cơ hội việc làm sau khi tốt nghiệp?",
+            "📞 Thông tin liên hệ của trường?"
+        ]
+    else:
+        st.markdown("### 💡 Frequently Asked Questions")
+        questions = [
+            "📝 How to apply for admission?",
+            "💰 What is the annual tuition?",
+            "📚 What programs are offered?",
+            "🏠 Is there a dormitory?",
+            "🎓 Career opportunities?",
+            "📞 Contact information?"
+        ]
+    
+    cols = st.columns(2)
+    for i, q in enumerate(questions):
+        with cols[i % 2]:
+            clean_q = ' '.join(q.split()[1:])
+            if st.button(q, key=f"quick_{i}", use_container_width=True):
+                st.session_state.pending_question = clean_q
+                st.session_state.first_visit = False
+                st.rerun()
+
+def render_analytics():
+    """Render analytics"""
+    st.markdown("### 📊 Thống kê")
+    
+    analytics = st.session_state.analytics
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric("Tổng câu hỏi", analytics.get('total_queries', 0))
+    
+    with col2:
+        positive = analytics.get('positive_feedback', 0)
+        negative = analytics.get('negative_feedback', 0)
+        total_fb = positive + negative
+        satisfaction = (positive / total_fb * 100) if total_fb > 0 else 0
+        st.metric("Độ hài lòng", f"{satisfaction:.0f}%")
+    
+    with col3:
+        st.metric("Phản hồi (+/-)", f"{positive}/{negative}")
+
+def render_sidebar(stats: Dict):
+    """Render sidebar"""
+    with st.sidebar:
+        st.markdown("### ⚙️ Cài đặt")
+        
+        # Language
+        lang_options = {'vi': '🇻🇳 Tiếng Việt', 'en': '🇬🇧 English'}
+        selected_lang = st.selectbox(
+            "Ngôn ngữ",
+            options=list(lang_options.keys()),
+            format_func=lambda x: lang_options[x],
+            index=0 if st.session_state.language == 'vi' else 1
+        )
+        
+        if selected_lang != st.session_state.language:
+            st.session_state.language = selected_lang
+            st.rerun()
+        
+        # Status
+        with st.expander("📊 Trạng thái", expanded=False):
+            st.success("✅ Gemini API: Active")
+            
+            if stats:
+                st.info(f"📁 Files: {stats.get('processed_files', 0)}")
+                st.info(f"📦 Chunks: {stats.get('total_chunks', 0)}")
+            else:
+                st.warning("⚠️ No vectorstore (API-only mode)")
+            
+            memory_turns = len(st.session_state.conversation_memory.chat_memory.messages)
+            st.info(f"🧠 Memory: {memory_turns} turns")
+        
+        # Actions
+        st.markdown("### 🔧 Thao tác")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🔄 Refresh", use_container_width=True):
+                st.cache_resource.clear()
+                st.session_state.clear()
+                st.rerun()
+        
+        with col2:
+            if st.button("🗑️ Clear", use_container_width=True):
+                st.session_state.messages = []
+                st.session_state.conversation_memory.clear()
+                st.session_state.first_visit = True
+                st.rerun()
+        
+        # Export
+        st.markdown("### 💾 Export")
+        
+        if st.session_state.messages:
+            export_data = export_chat_txt()
+            st.download_button(
+                label="📥 Download (.txt)",
+                data=export_data,
+                file_name=f"chat_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                mime="text/plain",
+                use_container_width=True
+            )
+            
+            total_msgs = len(st.session_state.messages)
+            user_msgs = sum(1 for m in st.session_state.messages if m["role"] == "user")
+            st.caption(f"📊 {total_msgs} messages ({user_msgs} questions)")
+        else:
+            st.info("No chat history")
+        
+        # Analytics toggle
+        if st.button("📈 Analytics", use_container_width=True):
+            st.session_state.show_analytics = not st.session_state.get('show_analytics', False)
+            st.rerun()
+        
+        # Contact
+        st.markdown("---")
+        st.markdown("### 📞 Contact")
+        st.markdown(format_contact_info(st.session_state.language))
+        
+        # Footer
+        st.markdown("---")
+        st.caption(f"🤖 Chatbot v{Config.VERSION}")
+        st.caption("Features: Memory | Feedback | Analytics")
+
+def export_chat_txt() -> str:
+    """Export as text"""
+    content = "=" * 60 + "\n"
+    content += "CHAT HISTORY - AI CHATBOT v4.0\n"
+    content += "HCMC University of Law\n"
+    content += f"Exported: {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}\n"
+    content += "=" * 60 + "\n\n"
+    
+    for i, msg in enumerate(st.session_state.messages, 1):
+        role = "USER" if msg["role"] == "user" else "CHATBOT"
+        content += f"{role}:\n{msg['content']}\n"
+        
+        if msg["role"] == "assistant":
+            if "category" in msg:
+                content += f"Category: {msg['category']}\n"
+            if "confidence" in msg:
+                content += f"Confidence: {msg['confidence']:.0%}\n"
+            if "sources" in msg and msg['sources']:
+                content += f"Sources: {', '.join(msg['sources'])}\n"
+        
+        content += "\n" + "-" * 60 + "\n\n"
+    
+    content += "\n" + format_contact_info()
+    return content
+
+def render_footer():
+    """Render footer"""
+    st.markdown("---")
+    info = Config.CONTACT_INFO
+    st.markdown(f"""
+    <div style="text-align: center; padding: 1.5rem; background: #f5f7fa; border-radius: 12px;">
         <h4>🏛️ Trường Đại học Luật TP. Hồ Chí Minh</h4>
-        <p>📍 2 Nguyễn Tất Thành, Phường 12, Quận 4, TP.HCM</p>
-        <p>📞 Hotline: 1900 5555 14 | Email: tuyensinh@hcmulaw.edu.vn</p>
-        <p>🌐 www.hcmulaw.edu.vn | 📘 facebook.com/hcmulaw</p>
-        <p style="margin-top:1rem;opacity:0.8;font-size:0.85em;">
-            🤖 Chatbot v2.2 | Phát triển bởi Lvphung - CNTT
+        <p>📍 {info['address']}</p>
+        <p>📞 {' | '.join(info['hotline'])} | ☎️ {info['phone']}</p>
+        <p>📧 {info['email']} | 🌐 {info['website']}</p>
+        <p style="margin-top: 1rem; opacity: 0.7; font-size: 0.85em;">
+            🚀 Powered by Gemini AI | Version {Config.VERSION}
         </p>
     </div>
     """, unsafe_allow_html=True)
+
+# ============================================================================
+# MAIN APPLICATION
+# ============================================================================
+
+def main():
+    """Main application - Streamlit Cloud optimized"""
+    
+    st.set_page_config(
+        page_title="AI Chatbot v4.0 - HCMC Law University",
+        page_icon="⚖️",
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
+    
+    load_dotenv()
+    init_session_state()
+    
+    render_header()
+    
+    # Initialize with proper error handling
+    st.info("🔄 Initializing system...")
+    
+    # Step 1: Gemini API (critical)
+    gemini_config = get_gemini_config()
+    if not gemini_config:
+        st.error("❌ Cannot connect to Gemini API. Please check your API key in Secrets.")
+        st.stop()
+    
+    st.success("✅ Gemini API connected")
+    
+    # Step 2: Vectorstore (optional)
+    try:
+        vectorstore, stats = initialize_vectorstore()
+        if vectorstore:
+            st.success(f"✅ Vectorstore loaded ({stats.get('total_chunks', 0)} chunks)")
+        else:
+            st.info("💡 Running in API-only mode (no document context)")
+    except Exception as e:
+        st.warning(f"⚠️ Vectorstore failed: {str(e)[:100]}")
+        st.info("💡 Continuing in API-only mode")
+        vectorstore = None
+        stats = {}
+    
+    # Clear initialization messages
+    time.sleep(1)
+    
+    # Render sidebar
+    render_sidebar(stats)
+    
+    # Show analytics if toggled
+    if st.session_state.get('show_analytics', False):
+        render_analytics()
+        st.markdown("---")
+    
+    # First visit
+    if not st.session_state.messages and st.session_state.first_visit:
+        render_quick_questions()
+        
+        st.markdown("""
+        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 1.5rem; border-radius: 12px; color: white; margin-top: 1.5rem;">
+            <h4>💡 New Features v4.0:</h4>
+            <ul style="margin: 0.5rem 0;">
+                <li>🧠 <strong>Conversation Memory:</strong> Remembers context</li>
+                <li>📊 <strong>Confidence Scores:</strong> Shows answer reliability</li>
+                <li>💬 <strong>Feedback System:</strong> Rate responses with 👍/👎</li>
+                <li>📚 <strong>Source Attribution:</strong> See referenced documents</li>
+                <li>🌐 <strong>Multi-language:</strong> Vietnamese & English support</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Display chat history
+    for idx, msg in enumerate(st.session_state.messages):
+        with st.chat_message(msg["role"]):
+            if msg["role"] == "assistant":
+                # Badges
+                badge_html = get_category_badge(msg.get("category", ""))
+                if msg.get("confidence", 0) > 0:
+                    badge_html += " " + get_confidence_badge(msg["confidence"])
+                st.markdown(badge_html, unsafe_allow_html=True)
+            
+            # Content
+            st.markdown(msg["content"])
+            
+            # Sources
+            if msg["role"] == "assistant" and msg.get("sources"):
+                render_sources(msg["sources"])
+            
+            # Feedback
+            if msg["role"] == "assistant" and msg.get("feedback") is None:
+                render_feedback_buttons(idx)
+            elif msg["role"] == "assistant" and msg.get("feedback"):
+                fb_text = "👍 Helpful" if msg["feedback"] > 0 else "👎 Needs improvement"
+                st.caption(f"💬 Your feedback: {fb_text}")
+    
+    # Handle input
+    user_input = None
+    
+    if st.session_state.pending_question:
+        user_input = st.session_state.pending_question
+        st.session_state.pending_question = None
+    
+    if not user_input:
+        placeholder = "💬 Type your question..." if st.session_state.language == 'en' else "💬 Nhập câu hỏi..."
+        user_input = st.chat_input(placeholder)
+    
+    # Process input
+    if user_input:
+        user_input = sanitize_input(user_input)
+        
+        if not user_input:
+            st.warning("⚠️ Please enter a valid question")
+            st.rerun()
+        
+        # Rate limit
+        can_proceed, rate_msg = check_rate_limit()
+        if not can_proceed:
+            st.error(rate_msg)
+            st.rerun()
+        
+        # Mark as not first visit
+        st.session_state.first_visit = False
+        
+        # Add user message
+        st.session_state.messages.append({
+            "role": "user",
+            "content": user_input,
+            "timestamp": datetime.now().isoformat()
+        })
+        
+        # Rerun to display
+        st.rerun()
+    
+    # Generate answer if needed
+    if (st.session_state.messages and 
+        st.session_state.messages[-1]["role"] == "user" and
+        (len(st.session_state.messages) == 1 or 
+         st.session_state.messages[-2]["role"] == "assistant")):
+        
+        last_question = st.session_state.messages[-1]["content"]
+        
+        with st.chat_message("assistant"):
+            with st.spinner("🤔 Thinking..."):
+                try:
+                    answer, category, confidence, sources = generate_answer(
+                        last_question, vectorstore, gemini_config
+                    )
+                    
+                    # Display badges
+                    badge_html = get_category_badge(category)
+                    if confidence > 0:
+                        badge_html += " " + get_confidence_badge(confidence)
+                    st.markdown(badge_html, unsafe_allow_html=True)
+                    
+                    # Display answer
+                    st.markdown(answer)
+                    
+                    # Show sources
+                    if sources:
+                        render_sources(sources)
+                    
+                    # Save to history
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": answer,
+                        "category": category,
+                        "confidence": confidence,
+                        "sources": sources,
+                        "timestamp": datetime.now().isoformat(),
+                        "feedback": None
+                    })
+                    
+                    # Reset error count
+                    st.session_state.error_count = 0
+                    
+                    # Feedback buttons
+                    render_feedback_buttons(len(st.session_state.messages) - 1)
+                    
+                except Exception as e:
+                    st.session_state.error_count += 1
+                    
+                    lang = st.session_state.language
+                    error_message = f"""
+❌ **Sorry, an error occurred**
+
+Please try again or contact us:
+
+{format_contact_info(lang)}
+"""
+                    if Config.DEBUG:
+                        error_message += f"\n\n_Debug: {str(e)[:200]}_"
+                    
+                    st.error(error_message)
+                    
+                    st.session_state.messages.append({
+                        "role": "assistant",
+                        "content": error_message,
+                        "category": "System Error",
+                        "confidence": 0.0,
+                        "sources": [],
+                        "timestamp": datetime.now().isoformat(),
+                        "feedback": None
+                    })
+                    
+                    if st.session_state.error_count >= 3:
+                        st.warning("⚠️ Multiple errors detected. Try refreshing the page.")
+    
+    # Footer
+    render_footer()
 
 if __name__ == "__main__":
     main()
